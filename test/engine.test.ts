@@ -160,6 +160,23 @@ describe('特权/补货/上限', () => {
     expect(st.players[0].tokens.blue).toBe(2);
     expect(() => applyMove(g, { privileges: [1], action: { kind: 'take', cells: [5] } })).toThrow(); // 特权拿黄金非法
   });
+  test('replenishFirst: 先补货后特权, 可拿新填上的格', () => {
+    const board = Array(25).fill(null);
+    board[0] = 'blue'; board[5] = 'blue'; board[6] = null; // 6 号格空
+    const a = mkPlayer('A'); a.privileges = 1;
+    const g = mkGame(board, [a, mkPlayer('B')]);
+    g.bag = ['red', 'green', 'white', 'blue']; // 袋里要有 token 才能补货
+    // 默认顺序(特权先): 空6格拿不了
+    expect(() => applyMove(g, { privileges: [6], replenish: true, action: { kind: 'take', cells: [5] } })).toThrow();
+    // 先补货: 6 号格被回填, 特权可拿
+    const st = applyMove(g, { privileges: [6], replenish: true, replenishFirst: true, action: { kind: 'take', cells: [5] } });
+    expect(st.players[0].tokens.blue).toBe(1);
+    expect(st.board[6]).toBeNull(); // 被特权拿走
+    expect(Object.values(st.players[0].tokens).reduce((s, n) => s + n, 0)).toBe(2); // 特权1 + 拿取1
+    // 补货后对手得 1 特权, 特权用摔后归零
+    expect(st.players[0].privileges).toBe(0);
+    expect(st.players[1].privileges).toBe(1);
+  });
   test('特权池空时可从对手处夺取', () => {
     const board = Array(25).fill(null);
     board[0] = 'green'; board[5] = 'green'; board[10] = 'green';
@@ -167,8 +184,8 @@ describe('特权/补货/上限', () => {
     const b = mkPlayer('B'); b.privileges = 3;
     const g = mkGame(board, [a, b]);
     // A 拿 3 同色 -> B 应得特权, 但池空 -> 从 A? A=0,B=3 -> 全在 B 手, B 已有 3 -> 无事发生
-    const st = applyMove(g, { action: { kind: 'take', cells: [0, 5, 10] } });
-    expect(b.privileges).toBe(3);
+    const st0 = applyMove(g, { action: { kind: 'take', cells: [0, 5, 10] } });
+    expect(st0.players[1].privileges).toBe(3);
     // 反过来: B 拿 3 同色, A 应得特权但池空 -> 从 B 抢
     const g2 = mkGame(board, [structuredClone(a), structuredClone(b)]);
     g2.current = 1;
@@ -311,7 +328,7 @@ describe('引擎健壮性', () => {
     expect(a.finalState.log).toEqual(b.finalState.log);
   });
   test('随机自对弈 30 局: 全部正常结束, token 始终守恒', async () => {
-    const { randomAgent } = await import('../src/agents/random.ts');
+    await import('../src/agents/random.ts');
     for (let seed = 0; seed < 30; seed++) {
       const g = createGame({ seed });
       let state = g;

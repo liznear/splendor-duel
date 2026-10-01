@@ -8,7 +8,7 @@
 </head>
 <body>
 <header>
-  <h1>💎 璀璨宝石对决 Arena</h1>
+  <h1>💎 璀璨宝石对决 <span class="en">Arena</span></h1>
   <button id="btn-new" class="ghost">新对局</button>
 </header>
 
@@ -22,9 +22,9 @@
   <div id="setup-human" class="setup-body">
     <label>对手 Agent:
       <select id="h-bot">
+        <option value="llm" selected>LLM</option>
         <option value="greedy">贪心bot</option>
         <option value="random">随机bot</option>
-        <option value="llm">LLM</option>
       </select>
     </label>
     <label class="llm-only">模型 (可选, 如 anthropic/claude-sonnet-4-5):
@@ -67,18 +67,19 @@
   <div id="banner" class="hidden"></div>
   <div class="layout">
     <div class="col board-col">
-      <h2>棋盘 <span class="coord-hint">A-E 列 · 1-5 行</span></h2>
       <div id="board" class="board"></div>
       <div class="pools">
         <span>特权池: <b id="pool-priv">-</b></span>
-        <span>皇家卡: <span id="pool-royal"></span></span>
+      </div>
+      <div class="pools pools-royal">
+        <span>皇家卡:</span>
+        <div id="pool-royal"></div>
       </div>
     </div>
     <div class="col">
-      <h2>金字塔 <span class="coord-hint">上3=三级 · 中4=二级 · 下5=一级</span></h2>
       <div id="pyramid"></div>
     </div>
-    <div class="col">
+    <div class="col players-col">
       <h2>玩家</h2>
       <div id="players"></div>
       <h2>日志</h2>
@@ -96,14 +97,12 @@
     </div>
     <div id="human-controls">
       <div id="thinking" class="hidden">⏳ 对手思考中…</div>
+      <div id="bot-msg" class="hidden">
+        <button id="bot-msg-toggle" class="ghost">🤖 LLM 输出 ▸</button>
+        <pre id="bot-msg-body" class="hidden"></pre>
+      </div>
       <div id="human-turn">
-        <div class="actionbar-row">
-          <b>我的回合</b>
-          <label id="priv-toggle-line"><input type="checkbox" id="priv-mode"> 点选特权 token</label>
-          <label id="replenish-line"><input type="checkbox" id="replenish"> 主动补货 (对手得1特权)</label>
-        </div>
-        <div id="priv-cells" class="priv-cells"></div>
-        <div id="actions" class="actions"></div>
+        <div id="pick-bar" class="pick-bar"></div>
         <div id="extras" class="extras"></div>
         <button id="btn-submit" class="primary" disabled>提交走法</button>
         <div id="move-error" class="error"></div>
@@ -111,6 +110,10 @@
     </div>
   </div>
 </section>
+
+<div id="modal-root" class="modal-overlay hidden">
+  <div id="modal-box" class="modal"></div>
+</div>
 
 <script type="module" src="/app.js"></script>
 </body>

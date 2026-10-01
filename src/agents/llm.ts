@@ -44,12 +44,12 @@ const SYSTEM_PROMPT = `你是 Splendor Duel(璀璨宝石对决)棋手, 目标是
 
 export interface LlmOptions {
   name?: string;
-  model?: string; // "provider/id"; 缺省用 opencode-go/deepseek-v4-flash, 再退回会话默认
+  model?: string; // "provider/id"; 缺省用 opencode-go/deepseek-v4.1-flash, 再退回会话默认
   thinkingLevel?: 'off' | 'low' | 'medium' | 'high';
   verbose?: boolean; // 打印模型原始回复(调试)
 }
 
-const DEFAULT_MODEL = 'opencode-go/deepseek-v4-flash';
+const DEFAULT_MODEL = 'opencode-go/qwen3.8-flash';
 
 export function llmAgent(opts: LlmOptions = {}): Agent {
   let session: Awaited<ReturnType<PiModule['createAgentSession']>>['session'] | null = null;
@@ -161,7 +161,13 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
       (Object.entries(opp.tokens) as [TokenColor, number][])
         .filter(([, n]) => n > 0).map(([c, n]) => `${TOKEN_ZH[c]}${n}`).join(' ') || '无'
     } 折扣:${(Object.entries(opp.bonuses) as [Gem, number][]).filter(([, n]) => n > 0).map(([g, n]) => `${GEM_ZH[g]}${n}`).join(' ') || '无'}`);
-    if (opp.reserved.length > 0) lines.push(`对手预留: ${opp.reserved.length}张(内容保密)`);
+    if (opp.reserved.length > 0) {
+      // 明留(金字塔)公开, 盲留(牌库顶)仅数量
+      const open = opp.reserved.filter((c) => c.id !== 'hidden');
+      const blindN = opp.reserved.length - open.length;
+      if (open.length > 0) lines.push(`对手明留卡: ${open.map((c) => cardCompact(c)).join(' ; ')}`);
+      if (blindN > 0) lines.push(`对手盲留: ${blindN}张(内容保密)`);
+    }
     lines.push('', `【我的已购卡】${me.cards.map((c) => `${c.color ? GEM_ZH[c.color] : '分'}${c.def.points}${c.def.crowns ? '♛' + c.def.crowns : ''}`).join(' ') || '无'}`);
     lines.push('', `【可执行的行动】(输入编号 i):`);
     lines.push(renderActions(ctx.view, ctx.seat, ctx.legal));
@@ -189,6 +195,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
 
   return {
     name: opts.name ?? `LLM${opts.model ? `(${opts.model.split('/').pop()})` : ''}`,
+    lastRaw: '' as string, // 最近一次模型原始输出 (UI 展示用)
     async chooseMove(ctx: TurnContext): Promise<Move> {
       const s = await ensureSession();
       let lastErr = '';
@@ -198,6 +205,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
           : `${buildPrompt(ctx)}\n\n你上次的回答有误: ${lastErr}\n请严格只输出一行合法 JSON.`;
         await s.prompt(prompt);
         const text = s.getLastAssistantText() ?? '';
+        this.lastRaw = text;
         if (opts.verbose) console.log(`\n[LLM 原始回复] ${text}`);
         const obj = extractJson(text);
         if (!obj) {

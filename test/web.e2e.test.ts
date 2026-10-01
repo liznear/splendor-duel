@@ -30,44 +30,81 @@ describe('静态资源', () => {
 });
 
 describe('人机对战 API', () => {
+  /** 两段式: pending=true 时轮询 /api/bot 直至轮到人类或结束 */
+  async function settle(id: string, payload: any) {
+    let p = payload;
+    let guard = 0;
+    while (p.pending && guard++ < 30) {
+      const r = await api(`/api/bot/${id}`, {});
+      p = r.json;
+    }
+    return p;
+  }
   test('开局 -> 人类走一步 -> bot 应答 -> 轮回人类', async () => {
-    const { json: g } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
-    expect(g.id).toBeTruthy();
+    const { json: g0 } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
+    const g = await settle(g0.id, g0);
     expect(g.legal).not.toBeNull();
     expect(g.legal.actions.length).toBeGreaterThan(10);
     // 选一个 take 行动
     const take = g.legal.actions.find((a: any) => a.action.kind === 'take');
     expect(take).toBeTruthy();
-    const res = await api(`/api/move/${g.id}`, { seat: 1, move: { action: take.action } });
+    const res = await api(`/api/move/${g0.id}`, { seat: 1, move: { action: take.action } });
     expect(res.status).toBe(200);
     expect(res.json.ok).toBe(true);
-    // bot 已行动, 又轮到人类 (或已结束)
-    expect(res.json.legal != null || res.json.over).toBeTrue();
+    // 走法已生效立即返回, pending=true 表示 bot 待行动
+    expect(res.json.pending).toBeTrue();
+    const after = await settle(g0.id, res.json);
+    expect(after.legal != null || after.over).toBeTrue();
+  });
+  test('可选行动即时执行: 特权确认后立即入账', async () => {
+    const { json: g0 } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
+    const g = await settle(g0.id, g0);
+    expect(g.current).toBe(1); // 先手固定 seat0, 人类后手持 1 特权
+    expect(g.view.players[1].privileges).toBe(1);
+    const cell = g.legal.privilegeCells[0];
+    const color = g.view.board[cell];
+    const before = g.view.players[1].tokens[color];
+    const r = await api(`/api/option/${g0.id}`, { seat: 1, privileges: [cell] });
+    expect(r.status).toBe(200);
+    expect(r.json.view.players[1].tokens[color]).toBe(before + 1); // 立刻到手
+    expect(r.json.view.players[1].privileges).toBe(0); // 立刻扣减
+    expect(r.json.view.board[cell]).toBeNull(); // 棋盘立即空格
+    // 之后提交不带 privileges 也能正常走
+    const take = r.json.legal.actions.find((a: any) => a.action.kind === 'take');
+    const m = await api(`/api/move/${g0.id}`, { seat: 1, move: { action: take.action } });
+    expect(m.status).toBe(200);
   });
   test('非法走法 400', async () => {
-    const { json: g } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
-    const res = await api(`/api/move/${g.id}`, { seat: 1, move: { action: { kind: 'take', cells: [0, 12] } } });
+    const { json: g0 } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
+    await settle(g0.id, g0);
+    const res = await api(`/api/move/${g0.id}`, { seat: 1, move: { action: { kind: 'take', cells: [0, 12] } } });
     expect(res.status).toBe(400);
     expect(res.json.error).toContain('无效');
   });
   test('非本人回合 400', async () => {
-    const { json: g } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
+    const { json: g0 } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
+    const g = await settle(g0.id, g0);
     // 先走一步让它轮到 bot? 不: 直接以错误 seat 提交
-    const res = await api(`/api/move/${g.id}`, { seat: 0, move: { action: g.legal.actions[0].action } });
+    const res = await api(`/api/move/${g0.id}`, { seat: 0, move: { action: g.legal.actions[0].action } });
     expect(res.status).toBe(400);
   });
-  test('对手预留卡对人类隐藏', async () => {
-    const { json: g } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
-    // 走几步后 bot 可能预留; 检查视图里对手 reserved 的内容是 hidden
-    let payload = g;
-    for (let i = 0; i < 6 && !payload.over; i++) {
-      const take = payload.legal.actions.find((a: any) => a.action.kind === 'take');
-      const res = await api(`/api/move/${g.id}`, { seat: 1, move: { action: take.action } });
-      payload = res.json;
+  test('对手仅盲留卡隐藏, 明留卡可见', async () => {
+    const { json: g0 } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
+    let payload = await settle(g0.id, g0);
+    for (let i = 0; i < 20 && !payload.over; i++) {
+      const any = payload.legal.actions.find((a: any) => a.action.kind === 'take') ?? payload.legal.actions[0];
+      const res = await api(`/api/move/${g0.id}`, { seat: 1, move: { action: any.action } });
+      payload = await settle(g0.id, res.json);
     }
+    // bot 可能已预留: 盲留应为 hidden 占位, 明留应露出真实卡 id
     const opp = payload.view.players[0];
     for (const c of opp.reserved) {
-      expect(c.id === 'hidden' || c.id.startsWith('hidden')).toBeTrue();
+      if (c.id === 'hidden') {
+        expect(c.blind ?? true).toBeTrue();
+      } else {
+        expect(c.id).toMatch(/^\d-\d+$/);
+        expect(c.cost).toBeTruthy();
+      }
     }
   });
 });

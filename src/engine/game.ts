@@ -27,6 +27,7 @@ export interface CardDef {
   ability: Ability | null;
   crowns: number;
   cost: Cost;
+  blind?: boolean; // 盲留(牌库顶)标记: 对手不可见; 金字塔明留对所有人可见
 }
 
 export interface RoyalDef {
@@ -84,8 +85,9 @@ export type MandatoryAction =
   | { kind: 'buy'; from: BuySource };
 
 export interface Move {
-  privileges?: number[]; // 先用特权: 每个特权拿 1 个指定非金 token
+  privileges?: number[]; // 用特权: 每个特权拿 1 个指定非金 token
   replenish?: boolean; // 补充棋盘: 对手获得 1 特权
+  replenishFirst?: boolean; // true: 先补货后用特权 (实体规则: 两项可选行动顺序任意)
   action: MandatoryAction;
   // 条件性选择(引擎按需校验, 缺省时用默认值)
   associateColor?: Gem; // 购买百搭卡时指定颜色
@@ -166,6 +168,7 @@ function newPlayer(name: string): PlayerState {
 export interface SetupOptions {
   seed?: number;
   names?: [string, string];
+  firstSeat?: 0 | 1; // 指定先手座位; 缺省随机
 }
 
 export function createGame(opts: SetupOptions = {}): GameState {
@@ -208,8 +211,8 @@ export function createGame(opts: SetupOptions = {}): GameState {
   }
 
   st.royals = ROYALS.map((r) => ({ ...r }));
-  // 随机先手; 后手获得 1 特权
-  if (rng() < 0.5) st.current = 1;
+  // 先手: 可指定 (缺省随机); 后手获得 1 特权
+  st.current = opts.firstSeat ?? (rng() < 0.5 ? 1 : 0);
   st.players[1 - st.current]!.privileges = 1;
   return st;
 }
@@ -340,6 +343,15 @@ function cellName(cell: number): string {
   return `${'ABCDE'[cell % 5]}${Math.floor(cell / 5) + 1}`;
 }
 
+const COLOR_ABBR: Record<TokenColor, string> = { white: '白', blue: '蓝', green: '绿', red: '红', black: '黑', pearl: '珠', gold: '金' };
+
+/** token 清单 -> "白×2 红×1" 式摘要 */
+function tokenSummary(ts: TokenColor[]): string {
+  const m = new Map<TokenColor, number>();
+  for (const t of ts) m.set(t, (m.get(t) ?? 0) + 1);
+  return [...m.entries()].map(([c, n]) => `${COLOR_ABBR[c]}×${n}`).join(' ');
+}
+
 function takeFromBoard(st: GameState, cell: number, p: PlayerState, why: string): TokenColor {
   const t = st.board[cell];
   if (t == null) throw new IllegalMove(`${why}: ${cellName(cell)} 为空格`);
@@ -359,15 +371,16 @@ function gainPrivilege(st: GameState, who: 0 | 1): void {
   }
 }
 
-function steal(st: GameState, thief: 0 | 1, pick: NonGold | undefined): void {
+function steal(st: GameState, thief: 0 | 1, pick: NonGold | undefined): NonGold | null {
   const p = st.players[thief]!, o = st.players[1 - thief]!;
   const avail = ([...GEMS, 'pearl'] as NonGold[]).filter((c) => o.tokens[c] > 0);
-  if (avail.length === 0) return; // 对手没有非金 token, 忽略
+  if (avail.length === 0) return null; // 对手没有非金 token, 忽略
   let color: NonGold;
   if (pick && o.tokens[pick] > 0) color = pick;
   else color = o.tokens.pearl > 0 ? 'pearl' : avail.sort((a, b) => o.tokens[b] - o.tokens[a])[0]!;
   o.tokens[color]--;
   p.tokens[color]++;
+  return color;
 }
 
 function defaultAssociateColor(p: PlayerState): Gem {
@@ -397,10 +410,11 @@ function resolveAbility(st: GameState, who: 0 | 1, ability: Ability | null, card
       gainPrivilege(st, who);
       st.log.push(`${p.name} 获得 1 特权`);
       break;
-    case 'steal':
-      steal(st, who, move.stealPick);
-      st.log.push(`${p.name} 偷取对手 1 枚 token`);
+    case 'steal': {
+      const got = steal(st, who, move.stealPick);
+      st.log.push(`${p.name} 偷取对手 ${got ? COLOR_ABBR[got] : '(对手无 token)'}`);
       break;
+    }
     case 'takeSame': {
       if (!cardColor) break;
       const cells = st.board
@@ -412,7 +426,7 @@ function resolveAbility(st: GameState, who: 0 | 1, ability: Ability | null, card
           ? move.takeSameCell
           : cells[0]!;
       takeFromBoard(st, cell, p, '拿同色');
-      st.log.push(`${p.name} 拿同色: ${cellName(cell)}(${cardColor})`);
+      st.log.push(`${p.name} 拿同色 ${COLOR_ABBR[cardColor]}(${cellName(cell)})`);
       break;
     }
   }
@@ -488,32 +502,53 @@ function discardExcess(st: GameState, who: 0 | 1, move: Move): void {
   st.log.push(`${p.name} 弃置 ${excess} 枚 token`);
 }
 
-export function applyMove(prev: GameState, move: Move): GameState {
+/** 回合内可选行动 (特权拿 token / 主动补货); 可单独即时执行, applyMove 内部复用 */
+export function applyOption(prev: GameState, opts: { privileges?: number[]; replenish?: boolean }): GameState {
   if (prev.winner !== null || prev.draw) throw new IllegalMove('对局已结束');
   const st = structuredClone(prev);
-  const who = prev.current;
+  runOptional(st, opts);
+  return st;
+}
+
+function runOptional(st: GameState, opts: { privileges?: number[]; replenish?: boolean }): void {
+  const who = st.current;
   const p = st.players[who]!, o = st.players[1 - who]!;
-  const rng = () => mulberry32Step(st);
-  st.log.push(`—— 第 ${st.turnCount + 1} 回合 ${p.name} ——`);
-
-  // 1. 可选行动: 用特权 (每枚拿 1 个非金 token)
-  for (const cell of move.privileges ?? []) {
-    if (p.privileges <= 0) throw new IllegalMove('没有特权可用');
-    const t = st.board[cell];
-    if (t == null || t === 'gold') throw new IllegalMove(`特权不能拿 ${cellName(cell)}`);
-    takeFromBoard(st, cell, p, '特权');
+  if (opts.privileges?.length) {
+    const got: TokenColor[] = [];
+    for (const cell of opts.privileges) {
+      if (p.privileges <= 0) throw new IllegalMove('没有特权可用');
+      const t = st.board[cell];
+      if (t == null || t === 'gold') throw new IllegalMove(`特权不能拿 ${cellName(cell)}`);
+      got.push(takeFromBoard(st, cell, p, '特权'));
+      p.privileges--; // 特权用掍后归还公共池 (池数 = 3 - 双方持有)
+    }
+    if (got.length) st.log.push(`${p.name} 用特权拿 ${tokenSummary(got)}`);
   }
-
-  // 2. 可选行动: 补充棋盘 -> 对手获得 1 特权
-  if (move.replenish) {
+  if (opts.replenish) {
     if (st.bag.length === 0) throw new IllegalMove('袋中没有 token, 无法补充棋盘');
-    shuffle(st.bag, rng);
+    shuffle(st.bag, () => mulberry32Step(st));
     for (const cell of SPIRAL) {
       if (st.bag.length === 0) break;
       if (st.board[cell] == null) st.board[cell] = st.bag.pop()!;
     }
     gainPrivilege(st, (1 - who) as 0 | 1);
     st.log.push(`${p.name} 补充了棋盘, ${o.name} 获得 1 特权`);
+  }
+}
+
+export function applyMove(prev: GameState, move: Move): GameState {
+  if (prev.winner !== null || prev.draw) throw new IllegalMove('对局已结束');
+  const st = structuredClone(prev);
+  const who = prev.current;
+  const p = st.players[who]!;
+  st.log.push(`—— 第 ${st.turnCount + 1} 回合 ${p.name} ——`);
+
+  // 可选行动: 用特权 / 补货 (顺序由 replenishFirst 决定; 逻辑在 runOptional, applyOption 可单独即时执行)
+  if (move.replenishFirst) {
+    if (move.replenish) runOptional(st, { replenish: true });
+    if (move.privileges?.length) runOptional(st, { privileges: move.privileges });
+  } else {
+    runOptional(st, { privileges: move.privileges, replenish: move.replenish });
   }
 
   // 3. 强制行动
@@ -544,7 +579,7 @@ export function applyMove(prev: GameState, move: Move): GameState {
     // 3 个同色 或 其中 2 个珍珠 -> 对手获得 1 特权
     if (taken.length === 3 && taken.every((t) => t === taken[0])) gainPrivilege(st, (1 - who) as 0 | 1);
     else if (taken.filter((t) => t === 'pearl').length >= 2) gainPrivilege(st, (1 - who) as 0 | 1);
-    st.log.push(`${p.name} 拿取 ${cells.map(cellName).join(' ')}`);
+    st.log.push(`${p.name} 拿取 ${tokenSummary(taken)}`);
   } else if (act.kind === 'reserve') {
     if (p.reserved.length >= 3) throw new IllegalMove('最多预留 3 张卡');
     const gold = takeFromBoard(st, act.goldCell, p, '预留');
@@ -560,6 +595,7 @@ export function applyMove(prev: GameState, move: Move): GameState {
       const deck = st.decks[act.from.level - 1]!;
       if (deck.length === 0) throw new IllegalMove('该等级牌库已空');
       card = deck.pop()!;
+      card.blind = true;
     }
     p.reserved.push(card);
     st.log.push(
@@ -655,11 +691,11 @@ const HIDDEN_CARD = (level: 1 | 2 | 3): CardDef => ({
   cost: { pearl: 0, black: 0, red: 0, green: 0, blue: 0, white: 0 },
 });
 
-/** 给 seat 玩家的视图: 隐藏对手预留卡内容 */
+/** 给 seat 玩家的视图: 只隐藏对手的盲留卡(牌库顶预留), 金字塔明留公开可见 */
 export function playerView(state: GameState, seat: 0 | 1): GameState {
   const view = structuredClone(state);
   const opp = view.players[1 - seat]!;
-  opp.reserved = opp.reserved.map((c) => HIDDEN_CARD(c.level));
+  opp.reserved = opp.reserved.map((c) => (c.blind ? HIDDEN_CARD(c.level) : c));
   return view;
 }
 

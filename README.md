@@ -34,7 +34,7 @@ bun test
 |---|---|
 | `random` | 均匀随机走法 |
 | `greedy` | 1 层前瞻 + 启发式估值（对随机胜率 ~80%） |
-| `llm[:provider/model]` | 大模型棋手；缺省用 `opencode-go/deepseek-v4-flash`（OPENCODE_API_KEY），可显式指定其他模型 |
+| `llm[:provider/model]` | 大模型棋手；缺省用 `opencode-go/deepseek-v4.1-flash`（OPENCODE_API_KEY），可显式指定其他模型 |
 | `human` | 终端交互（CLI 模式） |
 
 LLM agent 每回合收到：完整可公开信息局面（对手预留卡隐藏）+ 带编号的合法行动列表，要求输出 JSON 选择；非法输出重试至多 3 次后回退随机。模型凭据复用 pi 的配置（`~/.pi/agent/auth.json` 等）。
