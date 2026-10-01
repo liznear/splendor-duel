@@ -49,7 +49,7 @@ export interface LlmOptions {
   verbose?: boolean; // 打印模型原始回复(调试)
 }
 
-const DEFAULT_MODEL = 'opencode-go/qwen3.8-flash';
+const DEFAULT_MODEL = 'zai/glm-5.3-flash';
 
 export function llmAgent(opts: LlmOptions = {}): Agent {
   let session: Awaited<ReturnType<PiModule['createAgentSession']>>['session'] | null = null;

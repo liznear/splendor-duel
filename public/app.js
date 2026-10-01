@@ -148,7 +148,7 @@ const goldCells = () => G.view.board.map((t, i) => (t === 'gold' ? i : -1)).filt
 
 /** 回合内可分步执行: 特权 → 补货 → 主行动 */
 function freshUi() {
-  const base = { pick: null, action: null, privileges: [], phase: startPhase(), takeSamePick: null, extras: {}, hint: '', optDone: { priv: false, rep: false }, asked: { priv: false, rep: false } };
+  const base = { pick: null, action: null, privileges: [], phase: startPhase(), takeSamePick: null, extras: {}, hint: '', optDone: { priv: false, rep: false }, asked: { priv: false, rep: false }, discardExcess: -1 };
   return base;
 }
 function startPhase() {
@@ -577,6 +577,17 @@ function stealNeeded() {
   const opp = G.view.players[1 - G.seat];
   return PEARL_COLORS.some((t) => opp.tokens[t] > 0);
 }
+// 皇家卡偷取: 领的皇家卡若是偷取能力, 也需选颜色 (与卡牌偷取共用 move.stealPick)
+function royalStealNeeded() {
+  if (!royalNeeded() || stealNeeded()) return false;
+  const royals = G.view.royals;
+  if (royals.length === 0) return false;
+  const idx = Number.isInteger(ui.extras.royalPick) ? ui.extras.royalPick
+    : (['turn', 'privilege', 'steal'].map((a) => royals.findIndex((r) => r.ability === a)).find((i) => i >= 0) ?? 0);
+  if (royals[idx]?.ability !== 'steal') return false;
+  const opp = G.view.players[1 - G.seat];
+  return PEARL_COLORS.some((t) => opp.tokens[t] > 0);
+}
 function royalNeeded() {
   const c = actionCard();
   if (!c) return false;
@@ -584,11 +595,25 @@ function royalNeeded() {
   const cross = (me.crowns < 3 && me.crowns + c.crowns >= 3) || (me.crowns < 6 && me.crowns + c.crowns >= 6);
   return cross && G.view.royals.length > 0;
 }
-function discardNeeded() {
+function discardExcess() {
   const me = G.view.players[G.seat];
-  const held = Object.values(me.tokens).reduce((s, n) => s + n, 0);
-  const gained = ui.action?.action.kind === 'reserve' ? 1 : 0; // 特权 token 已即时入账
-  return held + gained > 10;
+  const held = Object.values(me.tokens).reduce((s, n) => s + n, 0); // 特权 token 已即时入账
+  const a = ui.action?.action;
+  // ponytail: 购买(支付+拿同色/偷取)后仍超 10 的罕见组合不预测, 交引擎默认贪心弃置
+  const gain = a?.kind === 'take' ? a.cells.length : a?.kind === 'reserve' ? 1 : 0;
+  return Math.max(0, held + gain - 10);
+}
+// 预填与引擎一致的默认弃置方案: 先宝石, 再珍珠, 最后黄金
+function defaultDiscard(excess) {
+  const me = G.view.players[G.seat];
+  const d = {};
+  let left = excess;
+  for (const t of ['black', 'red', 'green', 'blue', 'white', 'pearl', 'gold']) {
+    const n = Math.min(left, me.tokens[t]);
+    if (n > 0) d[t] = n;
+    left -= n;
+  }
+  return d;
 }
 
 function renderActionbar() {
@@ -687,6 +712,7 @@ function renderActionbar() {
   if (ui.pick) pick.append(cancel);
 
   // ---- 附加选择 ----
+  const excess = discardExcess();
   const ex = $('#extras');
   ex.replaceChildren();
   if (ui.action) {
@@ -706,6 +732,11 @@ function renderActionbar() {
       const opts = PEARL_COLORS.filter((t) => opp.tokens[t] > 0);
       ex.append(exRow('偷取对手 token:', opts.map((t) => colorBtn(t, () => { ui.extras.stealPick = t; }, ui.extras.stealPick === t))));
     }
+    if (royalStealNeeded()) {
+      const opp = G.view.players[1 - G.seat];
+      const opts = PEARL_COLORS.filter((t) => opp.tokens[t] > 0);
+      ex.append(exRow('皇家卡偷取对手 token:', opts.map((t) => colorBtn(t, () => { ui.extras.stealPick = t; }, ui.extras.stealPick === t))));
+    }
     if (takeSameNeeded() && c) {
       const cells = G.view.board.map((t, i) => (t === c.color ? i : -1)).filter((i) => i >= 0);
       ex.append(exRow(`「拿同色」选择${GEMZH[c.color]} token 格 (或点棋盘):`, cells.map((i) => cellBtn(i, () => { ui.takeSamePick = i; }, ui.takeSamePick === i))));
@@ -713,28 +744,35 @@ function renderActionbar() {
     if (royalNeeded()) {
       ex.append(exRow('皇冠里程碑 → 选皇家卡:', G.view.royals.map((r, i) => royalBtn(r, ui.extras.royalPick === i, () => { ui.extras.royalPick = i; }))));
     }
-    if (discardNeeded()) {
+    if (excess > 0) {
+      if (ui.discardExcess !== excess) {
+        ui.extras.discard = defaultDiscard(excess);
+        ui.discardExcess = excess;
+      }
       const div = el('div', 'row');
-      div.append(el('b', '', 'token 将超 10, 弃置:'));
+      div.append(el('b', '', `token 将超 10, 弃置 ${excess} 枚:`));
       ALL_COLORS.filter((t) => me.tokens[t] > 0).forEach((t) => {
         const inp = document.createElement('input');
         inp.type = 'number'; inp.min = '0'; inp.max = String(me.tokens[t]);
-        inp.value = ui.extras.discard?.[t] ?? '';
+        inp.value = ui.extras.discard[t] ?? 0;
         inp.addEventListener('input', () => {
-          ui.extras.discard = ui.extras.discard ?? {};
           ui.extras.discard[t] = Number(inp.value || 0);
         });
         const tok = el('span', 'tok');
         tok.append(gemEl(t), inp);
         div.append(tok);
       });
+      const dsum = Object.values(ui.extras.discard).reduce((s, n) => s + n, 0);
+      if (dsum !== excess) div.append(el('span', 'error-inline', dsum < excess ? `还需弃 ${excess - dsum} 枚` : '弃多了'));
       ex.append(div);
     }
   }
 
   const ready = !!ui.action
     && (!associateNeeded() || ui.extras.associateColor)
-    && (!royalNeeded() || Number.isInteger(ui.extras.royalPick));
+    && (!royalNeeded() || Number.isInteger(ui.extras.royalPick))
+    && ((!stealNeeded() && !royalStealNeeded()) || !!ui.extras.stealPick)
+    && (excess <= 0 || Object.values(ui.extras.discard ?? {}).reduce((s, n) => s + n, 0) === excess);
   $('#btn-submit').disabled = !ready;
 }
 
@@ -765,12 +803,13 @@ $('#btn-submit').addEventListener('click', async () => {
   const move = { action: ui.action.action };
   if (ui.privileges.length) move.privileges = ui.privileges; // 弹窗内临时选择走 applyMove; 已即时执行过则此处为空
   if (associateNeeded() && ui.extras.associateColor) move.associateColor = ui.extras.associateColor;
-  if (stealNeeded() && ui.extras.stealPick) move.stealPick = ui.extras.stealPick;
+  if ((stealNeeded() || royalStealNeeded()) && ui.extras.stealPick) move.stealPick = ui.extras.stealPick;
   if (takeSameNeeded() && ui.takeSamePick != null) move.takeSameCell = ui.takeSamePick;
   if (royalNeeded() && Number.isInteger(ui.extras.royalPick)) move.royalPick = ui.extras.royalPick;
-  if (discardNeeded() && ui.extras.discard) {
+  const excess = discardExcess();
+  if (excess > 0 && ui.extras.discard) {
     const d = Object.fromEntries(Object.entries(ui.extras.discard).filter(([, n]) => n > 0));
-    if (Object.keys(d).length) move.discard = d;
+    if (Object.values(d).reduce((s, n) => s + n, 0) === excess) move.discard = d;
   }
   $('#move-error').textContent = '';
   $('#human-turn').classList.add('hidden');
