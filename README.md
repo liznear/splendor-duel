@@ -27,7 +27,7 @@ bun test             # 引擎规则自检 (Web e2e 见下)
 | `greedy` | 1 层前瞻 + 启发式估值（对随机胜率 ~80%） |
 | `llm[:provider/model]` | 大模型棋手；缺省用 `opencode-go/deepseek-v4.1-flash`（OPENCODE_API_KEY），可显式指定其他模型 |
 
-LLM agent 每回合收到：完整可公开信息局面（对手预留卡隐藏）+ 带编号的合法行动列表，要求输出 JSON 选择；非法输出重试至多 3 次后回退随机。模型凭据复用 pi 的配置（`~/.pi/agent/auth.json` 等）。
+LLM agent 每回合收到：完整可公开信息局面（对手预留卡隐藏）+ 带编号的合法行动列表，通过调用 `make_move` 工具提交结构化走法（参数由 JSON Schema 约束，非法参数即时反馈给模型修正）；连续 3 轮未提交合法走法后回退随机。模型凭据复用 pi 的配置（`~/.pi/agent/auth.json` 等）。
 
 ## WebUI
 

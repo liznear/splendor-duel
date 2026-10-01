@@ -1,4 +1,4 @@
-// LLM agent: 通过 pi coding agent SDK 调用大模型下棋
+// LLM agent: 通过 pi coding agent SDK 调用大模型下棋 (tool-call 协议)
 import type { Agent, TurnContext } from './agent.js';
 import {
   applyMove, type CardDef, type GameState, type Gem, type Move, type NonGold, type TokenColor,
@@ -7,6 +7,8 @@ import {
   ABILITY_ZH, cellIndex, GEM_ZH, renderActions, TOKEN_ZH,
 } from '../render.js';
 import { fallbackMove } from './random.js';
+import { defineTool } from '@earendil-works/pi-coding-agent';
+import { Type } from 'typebox';
 
 type PiModule = typeof import('@earendil-works/pi-coding-agent');
 
@@ -33,14 +35,8 @@ const SYSTEM_PROMPT = `你是 Splendor Duel(璀璨宝石对决)棋手, 目标是
 - 胜利(回合结束判定): 20分 或 10皇冠 或 同一颜色卡上累计10分.
 - 起始: 随机先手, 后手得1特权. 特权被拿完时可从对手处抢1枚.
 
-你的输出: 只输出一行 JSON, 不要任何其他文字, 格式:
-{"i": 行动编号, "privileges": ["C3", ...], "replenish": false,
- "associateColor": "白", "royalPick": 0, "stealPick": "珍珠", "takeSameCell": "B2", "discard": {"白": 2}}
-- i: 必填, 行动列表里的编号(1开始)
-- privileges: 可选, 用特权时给出棋盘坐标(如 "C3"), 每枚特权一个坐标
-- replenish: 可选, true 表示主动补货
-- associateColor/royalPick/stealPick/takeSameCell/discard: 仅在对应情况需要选择时给出(颜色用中文: 白蓝绿红黑珍珠; royalPick 是皇家卡列表下标从0开始)
-省略不需要的字段. 思考要充分, 但最终只输出 JSON.`;
+提交走法: 唯一方式是调用 make_move 工具, 参数即走法(i 必填, 其余仅在需要时给出).
+参数不合法时工具会返回错误, 修正参数后重新调用. 不要输出 JSON 文本, 只用工具.`;
 
 export interface LlmOptions {
   name?: string;
@@ -49,12 +45,65 @@ export interface LlmOptions {
   verbose?: boolean; // 打印模型原始回复(调试)
 }
 
-const DEFAULT_MODEL = 'zai/glm-5.3-flash';
+const DEFAULT_MODEL = 'opencode-go/qwen3.8-flash';
+
+const ZH_COLORS = ['白', '蓝', '绿', '红', '黑', '珍珠'] as const;
+const ZH_GEMS = ['白', '蓝', '绿', '红', '黑'] as const;
+
+// make_move 工具参数 schema: 结构化保证字段名/类型/枚举合法, 剩余语义由 execute 校验
+const MOVE_PARAMS = Type.Object({
+  i: Type.Integer({ description: '必填. 【可执行的行动】列表里的编号(1开始)' }),
+  privileges: Type.Optional(Type.Array(Type.String(), {
+    description: '用特权拿 token 的棋盘坐标, 每枚特权一格, 如 ["C3","C4"]',
+  })),
+  replenish: Type.Optional(Type.Boolean({ description: 'true = 主动补货(对手得1特权)' })),
+  associateColor: Type.Optional(Type.Union(ZH_GEMS.map((c) => Type.Literal(c)), {
+    description: '购买百搭卡时叠放到的颜色列',
+  })),
+  royalPick: Type.Optional(Type.Integer({ description: '领皇家卡: 皇家卡列表下标(0开始)' })),
+  stealPick: Type.Optional(Type.Union(ZH_COLORS.map((c) => Type.Literal(c)), {
+    description: '偷取对手 token 的颜色(非金)',
+  })),
+  takeSameCell: Type.Optional(Type.String({ description: '「拿同色」选择的棋盘坐标, 如 "B2"' })),
+  discard: Type.Optional(
+    Type.Record(Type.String(), Type.Integer({ minimum: 1 }), {
+      description: '超 10 弃置, 如 {"白": 2, "珍珠": 1}; 键为颜色中文, 总数须正好等于超出量',
+    }),
+  ),
+});
 
 export function llmAgent(opts: LlmOptions = {}): Agent {
   let session: Awaited<ReturnType<PiModule['createAgentSession']>>['session'] | null = null;
   let pi: PiModule | null = null;
   let useModel = opts.model;
+  // 当前回合的提交槽: execute 写入, chooseMove 读取
+  let slot: { ctx: TurnContext; move: Move | null } | null = null;
+  let lastRaw = '';
+
+  const moveTool = defineTool({
+    name: 'make_move',
+    label: '提交走法',
+    description: '提交本回合走法(唯一方式). i 必填; 其余字段仅在对应情况需要时给出. 参数不合法会返回错误, 修正后重新调用.',
+    promptSnippet: '用 make_move 提交走法',
+    parameters: MOVE_PARAMS,
+    async execute(_toolCallId, params) {
+      if (!slot) return { content: [{ type: 'text', text: '错误: 当前没有进行中的回合' }], details: {} };
+      const raw = JSON.stringify(params);
+      // SAFETY: TypeBox Static 类型无索引签名; 参数结构与 jsonToMove 的宽松 Record 契约一致, 语义由 applyMove 预演兜底
+      const move = jsonToMove(slot.ctx, params as unknown as Record<string, unknown>);
+      if (!move) {
+        return { content: [{ type: 'text', text: `错误: 行动编号 i 无效 (须为 1-${slot.ctx.legal.actions.length}). 请重选后重新调用 make_move` }], details: {} };
+      }
+      try {
+        applyMove(slot.ctx.view, move); // 预演校验, 不修改 view
+      } catch (err) {
+        return { content: [{ type: 'text', text: `错误: ${(err as Error).message}. 请修正参数后重新调用 make_move` }], details: {} };
+      }
+      lastRaw = raw;
+      slot.move = move;
+      return { content: [{ type: 'text', text: 'OK, 走法已接受' }], details: {} };
+    },
+  });
 
   async function ensureSession() {
     if (session) return session;
@@ -86,7 +135,8 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     const { session: s } = await pi!.createAgentSession({
       resourceLoader: loader,
       sessionManager: pi!.SessionManager.inMemory(),
-      noTools: 'all',
+      tools: ['make_move'], // 只启用 make_move, 禁掉全部内置工具
+      customTools: [moveTool as never],
       ...(model ? { model: model as never } : {}),
       ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
     });
@@ -94,21 +144,8 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     return session;
   }
 
-  function extractJson(text: string): Record<string, unknown> | null {
-    const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
-    const raw = fenced ? fenced[1]! : text;
-    const start = raw.indexOf('{');
-    const end = raw.lastIndexOf('}');
-    if (start < 0 || end <= start) return null;
-    try {
-      return JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  }
-
   function jsonToMove(ctx: TurnContext, obj: Record<string, unknown>): Move | null {
-    const i = Number(obj.i ?? obj.index ?? obj.choose);
+    const i = Number(obj.i);
     if (!Number.isInteger(i) || i < 1 || i > ctx.legal.actions.length) return null;
     const move: Move & { privileges?: number[]; replenish?: boolean } = { action: ctx.legal.actions[i - 1]! };
     if (Array.isArray(obj.privileges)) {
@@ -171,7 +208,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     lines.push('', `【我的已购卡】${me.cards.map((c) => `${c.color ? GEM_ZH[c.color] : '分'}${c.def.points}${c.def.crowns ? '♛' + c.def.crowns : ''}`).join(' ') || '无'}`);
     lines.push('', `【可执行的行动】(输入编号 i):`);
     lines.push(renderActions(ctx.view, ctx.seat, ctx.legal));
-    lines.push('', '输出 JSON (i 必填; 需要时补充 privileges/associateColor/royalPick/stealPick/takeSameCell/discard):');
+    lines.push('', '调用 make_move 工具提交走法 (i 必填; 需要时补充 privileges/associateColor/royalPick/stealPick/takeSameCell/discard):');
     return lines.join('\n');
   }
 
@@ -195,36 +232,23 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
 
   return {
     name: opts.name ?? `LLM${opts.model ? `(${opts.model.split('/').pop()})` : ''}`,
-    lastRaw: '' as string, // 最近一次模型原始输出 (UI 展示用)
+    // 最近一次模型原始输出(接受的工具调用参数或失败时的文本), UI 展示用
+    get lastRaw() { return lastRaw; },
     async chooseMove(ctx: TurnContext): Promise<Move> {
       const s = await ensureSession();
       let lastErr = '';
       for (let attempt = 0; attempt < 3; attempt++) {
         const prompt = attempt === 0
           ? buildPrompt(ctx)
-          : `${buildPrompt(ctx)}\n\n你上次的回答有误: ${lastErr}\n请严格只输出一行合法 JSON.`;
-        await s.prompt(prompt);
-        const text = s.getLastAssistantText() ?? '';
-        this.lastRaw = text;
-        if (opts.verbose) console.log(`\n[LLM 原始回复] ${text}`);
-        const obj = extractJson(text);
-        if (!obj) {
-          lastErr = '没有解析到 JSON';
-          continue;
-        }
-        const move = jsonToMove(ctx, obj);
-        if (!move) {
-          lastErr = '行动编号 i 无效';
-          continue;
-        }
-        try {
-          applyMove(ctx.view, move); // 预演校验
-          return move;
-        } catch (err) {
-          lastErr = (err as Error).message;
-        }
+          : `${buildPrompt(ctx)}\n\n上一次失败: ${lastErr}\n请调用 make_move 工具提交合法走法.`;
+        slot = { ctx, move: null };
+        await s.prompt(prompt); // 参数错误已由工具结果即时反馈给模型, 同一 run 内自动修正
+        if (slot.move) return slot.move;
+        lastRaw = s.getLastAssistantText() ?? '';
+        if (opts.verbose) console.log(`\n[LLM 原始回复] ${lastRaw}`);
+        lastErr = '没有调用 make_move 工具(或参数始终非法)';
       }
-      console.warn(`⚠ ${this.name} 连续3次输出非法, 使用兜底随机走法`);
+      console.warn(`⚠ ${opts.name ?? 'LLM'} 连续3次未提交合法走法, 使用兜底随机走法`);
       return fallbackMove(ctx);
     },
   };
