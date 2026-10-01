@@ -174,7 +174,7 @@ async function handle(req: Request): Promise<Response> {
     // 新对局
     if (req.method === 'POST' && path === '/api/new') {
       const body = (await req.json()) as {
-        mode: 'human' | 'agents'; p1?: string; p2?: string; humanSeat?: 0 | 1;
+        mode: 'human' | 'agents'; p1?: string; p2?: string; humanSeat?: 0 | 1; seed?: number;
       };
       const id = `g${++gameSeq}`;
       let g: Game;
@@ -183,12 +183,12 @@ async function handle(req: Request): Promise<Response> {
         const botSpec = humanSeat === 0 ? (body.p2 ?? 'greedy') : (body.p1 ?? 'greedy');
         const bot = makeBot(botSpec);
         const agents: [Agent, Agent] = humanSeat === 0 ? [{ name: '你' } as Agent, bot] : [bot, { name: '你' } as Agent];
-        g = { state: newGame({ names: humanSeat === 0 ? ['你', bot.name] : [bot.name, '你'], firstSeat: 0 }), agents, mode: 'human', humanSeat, history: [] };
+        g = { state: newGame({ names: humanSeat === 0 ? ['你', bot.name] : [bot.name, '你'], firstSeat: 0, seed: body.seed }), agents, mode: 'human', humanSeat, history: [] };
         // bot 先手时立即返回 (pending=true), 前端调 /api/bot 等待, 避免长时间无反馈
       } else {
         const a1 = makeBot(body.p1 ?? 'greedy');
         const a2 = makeBot(body.p2 ?? 'random');
-        g = { state: newGame({ names: [a1.name, a2.name], firstSeat: 0 }), agents: [a1, a2], mode: 'agents', humanSeat: 0, history: [] };
+        g = { state: newGame({ names: [a1.name, a2.name], firstSeat: 0, seed: body.seed }), agents: [a1, a2], mode: 'agents', humanSeat: 0, history: [] };
       }
       games.set(id, g);
       return json({ id, mode: g.mode, humanSeat: g.humanSeat, ...statePayload(g, g.mode === 'human' ? g.humanSeat : 0) });

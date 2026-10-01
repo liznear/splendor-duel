@@ -41,7 +41,7 @@ describe('人机对战 API', () => {
     return p;
   }
   test('开局 -> 人类走一步 -> bot 应答 -> 轮回人类', async () => {
-    const { json: g0 } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
+    const { json: g0 } = await api('/api/new', { seed: 11, mode: 'human', p2: 'greedy', humanSeat: 1 });
     const g = await settle(g0.id, g0);
     expect(g.legal).not.toBeNull();
     expect(g.legal.actions.length).toBeGreaterThan(10);
@@ -57,7 +57,7 @@ describe('人机对战 API', () => {
     expect(after.legal != null || after.over).toBeTrue();
   });
   test('可选行动即时执行: 特权确认后立即入账', async () => {
-    const { json: g0 } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
+    const { json: g0 } = await api('/api/new', { seed: 22, mode: 'human', p2: 'greedy', humanSeat: 1 });
     const g = await settle(g0.id, g0);
     expect(g.current).toBe(1); // 先手固定 seat0, 人类后手持 1 特权
     expect(g.view.players[1].privileges).toBe(1);
@@ -75,21 +75,21 @@ describe('人机对战 API', () => {
     expect(m.status).toBe(200);
   });
   test('非法走法 400', async () => {
-    const { json: g0 } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
+    const { json: g0 } = await api('/api/new', { seed: 33, mode: 'human', p2: 'greedy', humanSeat: 1 });
     await settle(g0.id, g0);
     const res = await api(`/api/move/${g0.id}`, { seat: 1, move: { action: { kind: 'take', cells: [0, 12] } } });
     expect(res.status).toBe(400);
     expect(res.json.error).toContain('无效');
   });
   test('非本人回合 400', async () => {
-    const { json: g0 } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
+    const { json: g0 } = await api('/api/new', { seed: 44, mode: 'human', p2: 'greedy', humanSeat: 1 });
     const g = await settle(g0.id, g0);
     // 先走一步让它轮到 bot? 不: 直接以错误 seat 提交
     const res = await api(`/api/move/${g0.id}`, { seat: 0, move: { action: g.legal.actions[0].action } });
     expect(res.status).toBe(400);
   });
   test('对手仅盲留卡隐藏, 明留卡可见', async () => {
-    const { json: g0 } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
+    const { json: g0 } = await api('/api/new', { seed: 55, mode: 'human', p2: 'greedy', humanSeat: 1 });
     let payload = await settle(g0.id, g0);
     for (let i = 0; i < 20 && !payload.over; i++) {
       const any = payload.legal.actions.find((a: any) => a.action.kind === 'take') ?? payload.legal.actions[0];
@@ -111,7 +111,7 @@ describe('人机对战 API', () => {
 
 describe('Agent 对战 API', () => {
   test('step 逐步推进直至结束', async () => {
-    const { json: g } = await api('/api/new', { mode: 'agents', p1: 'greedy', p2: 'greedy' });
+    const { json: g } = await api('/api/new', { seed: 66, mode: 'agents', p1: 'greedy', p2: 'greedy' });
     let payload = g;
     let steps = 0;
     while (!payload.over && steps < 600) {
@@ -123,7 +123,7 @@ describe('Agent 对战 API', () => {
     expect(payload.turn).toBeLessThan(600);
   }, 60000);
   test('人机对局不接受 step', async () => {
-    const { json: g } = await api('/api/new', { mode: 'human', p2: 'greedy', humanSeat: 1 });
+    const { json: g } = await api('/api/new', { seed: 77, mode: 'human', p2: 'greedy', humanSeat: 1 });
     const res = await api(`/api/step/${g.id}`, {});
     expect(res.status).toBe(400);
   });

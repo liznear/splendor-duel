@@ -148,7 +148,7 @@ const goldCells = () => G.view.board.map((t, i) => (t === 'gold' ? i : -1)).filt
 
 /** 回合内可分步执行: 特权 → 补货 → 主行动 */
 function freshUi() {
-  const base = { pick: null, action: null, privileges: [], phase: startPhase(), takeSamePick: null, extras: {}, hint: '', optDone: { priv: false, rep: false } };
+  const base = { pick: null, action: null, privileges: [], phase: startPhase(), takeSamePick: null, extras: {}, hint: '', optDone: { priv: false, rep: false }, asked: { priv: false, rep: false } };
   return base;
 }
 function startPhase() {
@@ -306,8 +306,8 @@ function renderModals() {
   const canRep = canReplenishNow();
   const privAvail = me.privileges > 0 && G.legal.privilegeCells.length > 0;
   const nextOf = (ph) => {
-    if (ph === 'priv') return canRep && !ui.optDone.rep ? 'replenish' : 'main';
-    return privAvail && !ui.optDone.priv ? 'priv' : 'main';
+    if (ph === 'priv') return canRep && !ui.optDone.rep && !ui.asked.rep ? 'replenish' : 'main';
+    return privAvail && !ui.optDone.priv && !ui.asked.priv ? 'priv' : 'main';
   };
   // 即时执行可选行动: 确认后立刻向服务端应用, 棋盘/面板实时更新
   const execOption = async (opts) => {
@@ -340,8 +340,9 @@ function renderModals() {
         const cells = [...ui.privileges];
         if (!(await execOption({ privileges: cells }))) return; // 服务端已应用, 失败则留在本弹窗
         ui.privileges = [];
+        ui.optDone.priv = true; // 已真实执行, 不可反悔
       }
-      ui.optDone.priv = true;
+      ui.asked.priv = true; // 跳过仅是本地决定, 随时可反悔重开
       ui.phase = nextOf('priv');
       render();
     });
@@ -358,12 +359,13 @@ function renderModals() {
     const yes = el('button', 'primary', '补货 (对手得1特权)');
     yes.addEventListener('click', async () => {
       if (!(await execOption({ replenish: true }))) return;
-      ui.optDone.rep = true;
+      ui.optDone.rep = true; // 已真实执行, 不可反悔
+      ui.asked.rep = true;
       ui.phase = nextOf('replenish');
       render();
     });
     const no = el('button', '', '跳过 ▸');
-    no.addEventListener('click', () => { ui.optDone.rep = true; ui.phase = nextOf('replenish'); render(); });
+    no.addEventListener('click', () => { ui.asked.rep = true; ui.phase = nextOf('replenish'); render(); }); // 跳过可反悔
     const swap = el('button', 'ghost', '先特权 ▸');
     swap.addEventListener('click', () => { ui.phase = 'priv'; render(); });
     swap.hidden = !privAvail || ui.optDone.priv;
