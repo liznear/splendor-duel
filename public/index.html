@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>璀璨宝石对决 Arena</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>💎 璀璨宝石对决 Arena</h1>
+  <button id="btn-new" class="ghost">新对局</button>
+</header>
+
+<!-- 设置面板 -->
+<section id="setup" class="panel">
+  <div class="tabs">
+    <button class="tab active" data-mode="human">👤 人机对战</button>
+    <button class="tab" data-mode="agents">🤖 Agent 对战</button>
+  </div>
+
+  <div id="setup-human" class="setup-body">
+    <label>对手 Agent:
+      <select id="h-bot">
+        <option value="greedy">贪心bot</option>
+        <option value="random">随机bot</option>
+        <option value="llm">LLM</option>
+      </select>
+    </label>
+    <label class="llm-only">模型 (可选, 如 anthropic/claude-sonnet-4-5):
+      <input id="h-model" placeholder="留空用默认模型">
+    </label>
+    <label>执子:
+      <select id="h-seat">
+        <option value="1">我后手 (先得1特权)</option>
+        <option value="0">我先手</option>
+      </select>
+    </label>
+    <button id="btn-start" class="primary">开始对局</button>
+  </div>
+
+  <div id="setup-agents" class="setup-body hidden">
+    <label>先手 Agent:
+      <select id="a-p1">
+        <option value="greedy">贪心bot</option>
+        <option value="llm">LLM</option>
+        <option value="random">随机bot</option>
+      </select>
+    </label>
+    <label>后手 Agent:
+      <select id="a-p2">
+        <option value="random">随机bot</option>
+        <option value="greedy">贪心bot</option>
+        <option value="llm">LLM</option>
+      </select>
+    </label>
+    <label class="llm-only">LLM 模型 (可选):
+      <input id="a-model" placeholder="provider/model, 留空用默认">
+    </label>
+    <button id="btn-start-agents" class="primary">开始对局</button>
+  </div>
+  <p class="hint">规则: 5×5 棋盘拿 token → 买卡攒折扣/分数/皇冠; 胜利条件: 20分 或 10皇冠 或 同色10分。</p>
+</section>
+
+<!-- 对局界面 -->
+<section id="game" class="hidden">
+  <div id="banner" class="hidden"></div>
+  <div class="layout">
+    <div class="col board-col">
+      <h2>棋盘 <span class="coord-hint">A-E 列 · 1-5 行</span></h2>
+      <div id="board" class="board"></div>
+      <div class="pools">
+        <span>特权池: <b id="pool-priv">-</b></span>
+        <span>皇家卡: <span id="pool-royal"></span></span>
+      </div>
+    </div>
+    <div class="col">
+      <h2>金字塔 <span class="coord-hint">上3=三级 · 中4=二级 · 下5=一级</span></h2>
+      <div id="pyramid"></div>
+    </div>
+    <div class="col">
+      <h2>玩家</h2>
+      <div id="players"></div>
+      <h2>日志</h2>
+      <div id="log" class="log"></div>
+    </div>
+  </div>
+
+  <!-- 行动区 -->
+  <div id="actionbar" class="panel">
+    <div id="agent-controls" class="hidden">
+      <button id="btn-step" class="primary">单步 ▶</button>
+      <button id="btn-auto" class="primary">自动播放 ⏩</button>
+      <label>速度 <input id="speed" type="range" min="100" max="2000" value="800" step="100"></label>
+      <span id="turn-indicator"></span>
+    </div>
+    <div id="human-controls">
+      <div id="thinking" class="hidden">⏳ 对手思考中…</div>
+      <div id="human-turn">
+        <div class="actionbar-row">
+          <b>我的回合</b>
+          <label id="priv-toggle-line"><input type="checkbox" id="priv-mode"> 点选特权 token</label>
+          <label id="replenish-line"><input type="checkbox" id="replenish"> 主动补货 (对手得1特权)</label>
+        </div>
+        <div id="priv-cells" class="priv-cells"></div>
+        <div id="actions" class="actions"></div>
+        <div id="extras" class="extras"></div>
+        <button id="btn-submit" class="primary" disabled>提交走法</button>
+        <div id="move-error" class="error"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

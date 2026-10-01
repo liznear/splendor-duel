@@ -1,0 +1,14 @@
+{
+  "name": "splendor-duel-arena",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "web": "bun run src/web/server.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.99.2"
+  }
+}
