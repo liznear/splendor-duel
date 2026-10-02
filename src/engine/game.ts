@@ -641,8 +641,8 @@ export function applyMove(prev: GameState, move: Move): GameState {
     p.points += card.points;
     p.crowns += card.crowns;
     st.log.push(
-      `${p.name} 购买 ${card.id}${color ? `(${color})` : ''} 支付 ${
-        Object.entries(pay).filter(([, n]) => n! > 0).map(([c, n]) => `${c}×${n}`).join(' ') || '无'
+      `${p.name} 购买 ${card.id}${color ? `(${COLOR_ABBR[color]})` : ''} 支付 ${
+        Object.entries(pay).filter(([, n]) => n! > 0).map(([c, n]) => `${COLOR_ABBR[c as TokenColor]}×${n}`).join(' ') || '无'
       }`,
     );
     resolveAbility(st, who, card.ability, color, move);

@@ -445,6 +445,18 @@ function renderPyramid() {
     pool.append(royalBtn(r, ui.extras.royalPick === i, () => { ui.extras.royalPick = i; }));
   });
   $('#pool-priv').textContent = String(3 - G.view.players[0].privileges - G.view.players[1].privileges);
+  const bag = $('#pool-bag');
+  bag.replaceChildren(el('span', '', '袋中:'));
+  const cnt = {};
+  for (const t of G.view.bag) cnt[t] = (cnt[t] ?? 0) + 1;
+  const colors = ALL_COLORS.filter((c) => cnt[c]);
+  if (colors.length === 0) bag.append(el('span', 'hint', '空'));
+  for (const c of colors) {
+    const tok = el('span', 'tok');
+    tok.append(gemEl(c), span('n', String(cnt[c])));
+    tok.title = `补货时可回填 ${TZH[c]}`;
+    bag.append(tok);
+  }
 }
 
 function renderPlayers() {

@@ -107,6 +107,20 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
   let slot: TurnSlot | null = null;
   let lastRaw = '';
 
+  // 汇总 prompt 期间新增的 assistant 消息(thinking/文本/工具调用), 供界面展示; 模型思考在 content 的 thinking 块里
+  function collectReply(s: NonNullable<typeof session>, from: number): string {
+    const parts: string[] = [];
+    for (const m of s.messages.slice(from)) {
+      if (m.role !== 'assistant') continue;
+      for (const c of m.content) {
+        if (c.type === 'thinking' && c.thinking.trim()) parts.push(c.thinking.trim());
+        else if (c.type === 'text' && c.text.trim()) parts.push(c.text.trim());
+        else if (c.type === 'toolCall') parts.push(`[调用 ${c.name} ${JSON.stringify(c.arguments)}]`);
+      }
+    }
+    return parts.join('\n\n');
+  }
+
   // ---- 阶段1 工具: 用特权 (可在一次 run 内多次调用, 每次即时结算并展示新棋盘) ----
   const privilegeTool = defineTool({
     name: 'use_privilege',
@@ -314,7 +328,6 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
       if (bad.length > 0) {
         return err(`你选择的行动: ${actDesc}\n${bad.map((b, k) => `${k + 1}. ${b}`).join('\n')}\n请修正后重新调用 make_move(其余参数不变)`);
       }
-      lastRaw = JSON.stringify(params);
       slot.part = move;
       slot.submitted = true;
       return ok('OK, 走法已接受');
@@ -478,6 +491,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     get lastRaw() { return lastRaw; },
     async chooseMove(ctx: TurnContext): Promise<Move> {
       const s = await ensureSession();
+      const msgFrom = s.messages.length; // 本回合消息起点, 收集 thinking 用
       const me = ctx.view.players[ctx.seat]!;
       const canPriv = me.privileges > 0 && ctx.legal.privilegeCells.length > 0;
 
@@ -509,12 +523,15 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
         slot = { base: ctx.view, sim, part: { ...part }, phase: 'mandatory', lm, submitted: false };
         s.setActiveToolsByName(['make_move']);
         await s.prompt(buildPhase2Prompt(ctx, sim, part, lm, lastErr));
-        if (slot.submitted) return slot.part as Move;
-        lastRaw = s.getLastAssistantText() ?? '';
-        if (opts.verbose) console.log(`\n[LLM 原始回复] ${lastRaw}`);
+        if (slot.submitted) {
+          lastRaw = collectReply(s, msgFrom);
+          return slot.part as Move;
+        }
+        if (opts.verbose) console.log(`\n[LLM 原始回复] ${collectReply(s, msgFrom)}`);
         lastErr = '没有调用 make_move 工具(或参数始终非法)';
       }
       console.warn(`⚠ ${opts.name ?? 'LLM'} 连续3次未提交合法走法, 使用兜底随机走法`);
+      lastRaw = collectReply(s, msgFrom);
       return fallbackMove(ctx);
     },
   };
