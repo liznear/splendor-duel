@@ -99,7 +99,7 @@ const snapOf = (view: GameState, seat: 0 | 1): Snap => {
 };
 
 /** 两个快照间双方发生的事件(每步一行, 按卡id辨认) */
-export function diffEvents(prev: Snap, cur: Snap): string {
+function diffEvents(prev: Snap, cur: Snap): string {
   const newCards = <T extends { id: string }>(a: { id: string }[], b: T[]): T[] =>
     b.filter((c) => !a.some((x) => x.id === c.id));
   const mine: string[] = [], theirs: string[] = [];
@@ -358,27 +358,30 @@ function advance(view: GameState, seat: 0 | 1, mem: V3Memory): boolean {
 }
 
 interface Slot { where: string; c: CardLike }
-const poolOf = (view: GameState, seat: 0 | 1, includeReserved: boolean): Slot[] => {
-  const opp = view.players[1 - seat]!;
-  return [
-    ...view.pyramid.map((c, i) => (c ? { where: `金字塔${i + 1}号`, c } : null)),
-    ...(includeReserved ? opp.reserved.map((c, i) => (c && c.id !== 'hidden' ? { where: `对手明留${i + 1}`, c } : null)) : []),
-  ].filter((x): x is Slot => x !== null);
-};
+interface Line { name: string; prog: number; need: number; gain: (c: CardLike) => number }
+
+/** 玩家三条胜利线(总分/皇冠/最高单色)的进度与增益函数 */
+function winLines(p: PlayerState): Line[] {
+  const lines: Line[] = [
+    { name: '总分线', prog: p.points, need: 20, gain: (c) => c.points },
+    { name: '皇冠线', prog: p.crowns, need: 10, gain: (c) => c.crowns },
+  ];
+  const best = (Object.values(GEMS) as Gem[]).map((g) => ({ g, pts: colorPointsOf(p, g) })).sort((a, b) => b.pts - a.pts)[0]!;
+  if (best.pts > 0) lines.push({
+    name: `单色线(${GEM_ZH[best.g]})`, prog: best.pts, need: 10,
+    gain: (c) => (c.color === best.g || (c.isAssociate && p.cards.some((x) => x.color === best.g))) ? c.points : 0,
+  });
+  return lines;
+}
 
 /** 对手路线威胁: 三线进度+对手缺口推进卡+免费清单+⚡处置(治 bav1 败局: 蓝列9/10才反应) */
 export function routeThreatBlock(view: GameState, seat: 0 | 1): string[] {
   const opp = view.players[1 - seat]!;
-  const pool = poolOf(view, seat, true);
-  const gains: { name: string; prog: number; need: number; gain: (c: CardLike) => number }[] = [
-    { name: '总分线', prog: opp.points, need: 20, gain: (c) => c.points },
-    { name: '皇冠线', prog: opp.crowns, need: 10, gain: (c) => c.crowns },
-  ];
-  const bestColor = (Object.values(GEMS) as Gem[]).map((g) => ({ g, pts: colorPointsOf(opp, g) })).sort((a, b) => b.pts - a.pts)[0]!;
-  if (bestColor.pts > 0) gains.push({
-    name: `单色线(${GEM_ZH[bestColor.g]})`, prog: bestColor.pts, need: 10,
-    gain: (c) => (c.color === bestColor.g || (c.isAssociate && opp.cards.some((x) => x.color === bestColor.g))) ? c.points : 0,
-  });
+  const pool: Slot[] = [
+    ...view.pyramid.map((c, i) => (c ? { where: `金字塔${i + 1}号`, c } : null)),
+    ...opp.reserved.map((c, i) => (c && c.id !== 'hidden' ? { where: `对手明留${i + 1}`, c } : null)),
+  ].filter((x): x is Slot => x !== null);
+  const gains = winLines(opp);
   const out: string[] = [];
   const crit: string[] = [];
   for (const l of gains) {
@@ -412,16 +415,7 @@ export function routeBlock(view: GameState, seat: 0 | 1, mem: V3Memory): string[
     ...view.pyramid.map((c, i) => (c ? { where: `金字塔${i + 1}号`, c } : null)),
     ...me.reserved.map((c, i) => ({ where: `我预留${i + 1}`, c })),
   ].filter((x): x is Slot => x !== null);
-  type Line = { name: string; prog: number; need: number; gain: (c: CardLike) => number };
-  const lines: Line[] = [
-    { name: '总分线', prog: me.points, need: 20, gain: (c) => c.points },
-    { name: '皇冠线', prog: me.crowns, need: 10, gain: (c) => c.crowns },
-  ];
-  const myColor = (Object.values(GEMS) as Gem[]).map((g) => ({ g, pts: colorPointsOf(me, g) })).sort((a, b) => b.pts - a.pts)[0]!;
-  if (myColor.pts > 0) lines.push({
-    name: `单色线(${GEM_ZH[myColor.g]})`, prog: myColor.pts, need: 10,
-    gain: (c) => (c.color === myColor.g || (c.isAssociate && me.cards.some((x) => x.color === myColor.g))) ? c.points : 0,
-  });
+  const lines = winLines(me);
   const score = (l: Line) => l.prog / l.need + 0.15 * pool.filter((x) => l.gain(x.c) > 0 && shortfall(me, x.c) <= 5).length;
   const keyCards = (l: Line) => pool.filter((x) => l.gain(x.c) > 0)
     .map((x) => ({ ...x, short: shortfall(me, x.c), gain: l.gain(x.c) }))
