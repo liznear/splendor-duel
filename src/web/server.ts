@@ -6,6 +6,8 @@ import {
 import { randomAgent } from '../agents/random.js';
 import { greedyAgent } from '../agents/greedy.js';
 import { llmAgent } from '../agents/llm.js';
+import { llm2Agent } from '../agents/llm2.js';
+import { llm3Agent } from '../agents/llm3.js';
 import type { Agent, TurnContext } from '../agents/agent.js';
 import { actionText } from '../render.js';
 import { GameRecorder, readSession, replayGame } from '../recorder.js';
@@ -48,16 +50,20 @@ function makeBot(spec: string, onThinking?: (name: string, text: string) => void
   switch (kind) {
     case 'random': return randomAgent();
     case 'greedy': return greedyAgent();
-    case 'llm': {
+    case 'llm':
+    case 'llm2':
+    case 'llm3': {
       // 后缀 @off/@low/@medium/@high 控制思考预算: llm / llm:model / llm:model@low
       const at = arg.lastIndexOf('@');
       const lv = at > 0 ? arg.slice(at + 1) : '';
       const thinkingLevel = (['off', 'low', 'medium', 'high'] as const).find((x) => x === lv);
       const model = (at > 0 ? arg.slice(0, at) : arg).replace(/@+$/, '');
-      const agent = llmAgent({
+      const label = kind === 'llm' ? 'LLM' : kind === 'llm2' ? 'LLM2' : 'LLM3';
+      const make = kind === 'llm' ? llmAgent : kind === 'llm2' ? llm2Agent : llm3Agent;
+      const agent = make({
         model: model || undefined,
         ...(thinkingLevel ? { thinkingLevel } : {}),
-        name: arg ? `LLM(${arg.split('/').pop()})` : 'LLM',
+        name: arg ? `${label}(${arg.split('/').pop()})` : label,
         ...(onThinking ? { onThinking: (text: string) => onThinking(agent.name, text) } : {}),
       });
       return agent;

@@ -309,9 +309,9 @@ if (hashFile) {
 
 function llmSpec(sel, modelInput) {
   const v = $(sel).value;
-  if (v !== 'llm') return v;
+  if (v !== 'llm' && v !== 'llm2' && v !== 'llm3') return v;
   const m = $(modelInput).value.trim();
-  return m ? `llm:${m}` : 'llm';
+  return m ? `${v}:${m}` : v;
 }
 
 $('#btn-start').addEventListener('click', async () => {

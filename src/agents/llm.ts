@@ -95,6 +95,14 @@ export interface LlmOptions {
   verbose?: boolean; // 打印模型原始回复(调试)
   /** 流式回调: 本回合模型 thinking/文本增量的累积快照(每回合重置), 供界面实时展示 */
   onThinking?: (snapshot: string) => void;
+  /** 覆盖系统提示词 (v2 变体用; 缺省用内置攻略提示词) */
+  systemPrompt?: string;
+  /** 追加到局面报告末尾的额外分析块 (如 v2 的对手预留进度预警) */
+  contextExtra?: (view: GameState, seat: 0 | 1) => string;
+  /** 自定义强制行动列表渲染; 输出的编号必须对应 lm.actions 下标+1 */
+  actionList?: (sim: GameState, seat: 0 | 1, lm: LegalMoves) => string;
+  /** 阶段2 行动列表前的分析摘要 (送特权警示/预留评估等) */
+  digest?: (sim: GameState, seat: 0 | 1, lm: LegalMoves) => string;
 }
 
 const DEFAULT_MODEL = 'opencode-go/deepseek-v4.1-flash';
@@ -473,15 +481,15 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     const loader = new pi.DefaultResourceLoader({
       cwd: process.cwd(),
       agentDir: pi.getAgentDir(),
-      systemPromptOverride: () => SYSTEM_PROMPT,
+      systemPromptOverride: () => opts.systemPrompt ?? SYSTEM_PROMPT,
       appendSystemPromptOverride: () => [],
     });
     await loader.reload();
     const { session: s } = await pi.createAgentSession({
       resourceLoader: loader,
       sessionManager: pi.SessionManager.inMemory(),
-      // 代码内固定 thinking 预算, 不读也不改任何配置文件
-      settingsManager: pi.SettingsManager.inMemory({ thinkingBudgets: { medium: 16384 } }),
+      // 代码内固定 thinking 预算, 不读也不改任何配置文件 (low=4K 供批量 A/B 提速用)
+      settingsManager: pi.SettingsManager.inMemory({ thinkingBudgets: { low: 4096, medium: 16384 } }),
       tools: ['use_privilege', 'use_replenish', 'skip_optional', 'make_move'], // 全量注册且全程激活; 阶段约束由各工具内部校验
       customTools: [privilegeTool as never, replenishTool as never, skipTool as never, moveTool as never],
       ...(model ? { model: model as never } : {}),
@@ -523,6 +531,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     const lines: string[] = [];
     lines.push(`第 ${ctx.turn + 1} 回合, 轮到你. 先决定【可选行动】(可以都不用):`);
     lines.push(buildContext(sim, ctx.seat));
+    if (opts.contextExtra) lines.push(opts.contextExtra(sim, ctx.seat));
     lines.push('', '【可选行动阶段】');
     if (me.privileges > 0) {
       lines.push(`你有特权 ${me.privileges} 枚, 每枚可拿棋盘任意非金格: ${privCellsLine(sim)}`);
@@ -549,8 +558,9 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     lines.push(buildContext(sim, ctx.seat));
     lines.push('', `本回合可选行动: ${summarizeOptional(part, ctx.view)}`);
     if (me.reserved.length > 0) lines.push(`我的预留卡: ${me.reserved.map((c, i) => `${i + 1}: ${cardCompact(c)}`).join(' ; ')}`);
+    if (opts.digest) lines.push('', opts.digest(sim, ctx.seat, lm));
     lines.push('', `【可执行的行动】(编号 i, 共 ${lm.actions.length} 个):`);
-    lines.push(stripAnsi(renderActions(sim, ctx.seat, lm)));
+    lines.push(opts.actionList ? opts.actionList(sim, ctx.seat, lm) : stripAnsi(renderActions(sim, ctx.seat, lm)));
     lines.push('', '调用 make_move 提交 (i 必填; 触发时必填: associateColor=买百搭卡选色 / royalPick=领皇家卡下标 / stealPick=偷取颜色 / takeSameCell=拿同色格 / discard=超10弃置. 缺失会返回错误并列出可选值, 按提示补齐重调):');
     if (failMsg) lines.push(`上一次失败: ${failMsg}\n请调用 make_move 工具提交合法走法.`);
     return lines.join('\n');

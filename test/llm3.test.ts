@@ -1,0 +1,81 @@
+// llm3 纯分析函数自检: 跨回合记忆 / 目标追踪 / 竞速与 outs / 行动列表 id (不调 LLM)
+import { describe, expect, test } from 'bun:test';
+import { applyMove, applyReplenish, createGame, legalMoves, playerView, type GameState } from '../src/engine/game.js';
+import {
+  actionListV3, createV3, crossesWin, oppOuts, raceBlock, shortfall, targetBlock,
+} from '../src/agents/llm3.js';
+
+/** 固定走法推进: 每步选第一个合法行动(确定性) */
+function step(st: GameState): GameState {
+  const lm = legalMoves(st);
+  if (lm.actions.length === 0) return applyReplenish(st);
+  return applyMove(st, { action: lm.actions[0]! });
+}
+
+describe('llm3 跨回合状态', () => {
+  test('流水账按步累积且能辨认买卡', () => {
+    let st = createGame({ seed: 42 });
+    const v3 = createV3();
+    for (let i = 0; i < 10; i++) {
+      v3.contextExtra(playerView(st, st.current), st.current); // 当前方视角推进记忆
+      st = step(st);
+    }
+    expect(v3.memory.ledger.length).toBeGreaterThanOrEqual(4);
+    expect(v3.memory.ledger.some((l) => l.includes('我:'))).toBe(true);
+    const txt = v3.contextExtra(playerView(st, st.current), st.current);
+    for (const key of ['【流水账】', '【目标追踪】', '【经济】', '【牌库匹配】', '【安全阀】', '【补货/预留建议】', '【阶段判定】']) {
+      expect(txt).toContain(key);
+    }
+    // 同一回合第二次调用(phase2)不重复推进
+    const before = v3.memory.ledger.length;
+    v3.contextExtra(playerView(st, st.current), st.current);
+    expect(v3.memory.ledger.length).toBe(before);
+  });
+
+  test('目标被对手买走时显式宣布失效', () => {
+    const st = createGame({ seed: 7 });
+    const v3 = createV3();
+    const view = playerView(st, 0);
+    v3.contextExtra(view, 0); // 初始化
+    const victim = view.pyramid.find((c) => c != null)!;
+    v3.memory.targetIds = [victim!.id];
+    // 模拟对手买走该卡: 卡进对手已购, 金字塔置空
+    const st2 = structuredClone(st);
+    st2.players[1]!.cards.push({ def: victim!, color: victim!.color });
+    const slot = st2.pyramid.findIndex((c) => c?.id === victim!.id);
+    st2.pyramid[slot] = null;
+    const lines = targetBlock(playerView(st2, 0), 0, v3.memory).join('\n');
+    expect(lines).toContain(victim!.id);
+    expect(lines).toMatch(/已被对手买走|已离开市场/);
+  });
+});
+
+describe('llm3 竞速与阻断', () => {
+  test('对手能买致胜卡时被计为 outs 并给出裁决', () => {
+    const st = createGame({ seed: 99 });
+    const card = st.pyramid.filter((c) => c != null).sort((a, b) => b!.points - a!.points)[0]!;
+    const opp = st.players[1]!;
+    opp.points = 20 - card.points; // 买后正好到 20
+    opp.tokens = { black: 4, red: 4, green: 4, blue: 4, white: 4, pearl: 2, gold: 3 }; // 万事俱备
+    const outs = oppOuts(playerView(st, 0), 0);
+    expect(outs.length).toBeGreaterThanOrEqual(1);
+    expect(crossesWin(opp, card)).toContain('总分20');
+    expect(shortfall(opp, card)).toBe(0);
+    const race = raceBlock(playerView(st, 0), 0).join('\n');
+    expect(race).toContain('现成胜线');
+    expect(race).toMatch(/拆除|抢跑|阻断/);
+  });
+});
+
+describe('llm3 行动列表', () => {
+  test('买/预留行带稳定卡 id, 拿取标注送特权', () => {
+    const st = createGame({ seed: 5 });
+    const lm = legalMoves(st);
+    const list = actionListV3(st, st.current, lm);
+    expect(list).toMatch(/\[id \d-\d+\]/);
+    // 预留去重: 黄金格数 × 卡数 远多于列出的预留行
+    const resLines = list.split('\n').filter((l) => l.includes('黄金+预留'));
+    const resActs = lm.actions.filter((a) => a.kind === 'reserve').length;
+    if (resActs > 0) expect(resLines.length).toBeLessThanOrEqual(resActs);
+  });
+});
