@@ -31,6 +31,10 @@ const PARSE_SYSTEM = `你是「璀璨宝石对决」人机对战界面的指令�
   「第r行第k张」= 上表第 r 行从左数第 k 个编号, 如 第3行第2张=9号, 第2行第4张=7号.
 - 自己的预留卡按「预留第n张」= 行动列表里的"预留n".
 
+规则速览(理解指令用; 合法性判断只看编号列表):
+- 强制行动三选一: 拿 1-3 个横/竖/斜直线连续相邻的非金 token(黄金与空格阻断; 颜色不必相同, 拿 3 同色或含 2 珍珠只是送对手 1 特权, 依然合法) / 拿 1 黄金+预留 1 张卡 / 买 1 张卡(支付费用-折扣, 黄金可当任意色).
+- 【可执行的行动】编号列表就是全部合法行动: 在列表里的一定合法, 不在列表里的一定不合法; 不要自行发明列表之外的约束(例如"三格必须同色"不足规则).
+
 交互协议(与界面一致, 分两种消息):
 1) 可选行动(仅当消息提到): 玩家指令涉及用特权/补货才调 submit_option, 完全没提就不调用工具, 直接回复"跳过".
 2) 强制行动: 从消息里的【可执行的行动】编号列表选 i 调 submit_move.
@@ -38,9 +42,10 @@ const PARSE_SYSTEM = `你是「璀璨宝石对决」人机对战界面的指令�
      此时停止调用工具, 用中文向玩家追问(列出可选值). 玩家的回答会在下一条消息送达,
      到时结合上下文调 submit_move 补齐(原行动 i 与已给参数保持不变), 不要让玩家重新描述整个指令.
    - 工具参数错误会返回中文提示, 按提示修正后重新调用即可.
-- 颜色一律用中文单字: 白/蓝/绿/红/黑/珍珠/金. 回复一律中文, 简短.`;
+- 颜色一律用中文单字: 白/蓝/绿/红/黑/珍珠/金. 回复一律中文, 简短.
+- 序数换算: 玩家用「第n张/第n个」描述列表项时对应下标 n-1(第1张=下标0).`;
 
-export interface SayMoveParams {
+interface SayMoveParams {
   i: number;
   associateColor?: string;
   royalPick?: number;
@@ -84,7 +89,7 @@ export function moveFromParams(actions: MandatoryAction[], params: SayMoveParams
   return move;
 }
 
-export interface MissingInfo {
+interface MissingInfo {
   field: string; // associateColor | royalPick | stealPick | takeSameCell
   hint: string; // 给模型/玩家的中文可选值说明
 }
@@ -149,7 +154,7 @@ export function completeConditionals(sim: GameState, seat: 0 | 1, mv: Move): Mis
     if (!Number.isInteger(mv.royalPick) || mv.royalPick! < 0 || mv.royalPick! >= sim.royals.length) {
       missing.push({
         field: 'royalPick',
-        hint: `皇家卡(皇冠里程碑触发)选哪张: ${sim.royals.map((r, i) => `${i}=${r.points}分${r.ability ? `【${ABILITY_ZH[r.ability] ?? r.ability}】` : ''}`).join(' ')}`,
+        hint: `皇家卡(皇冠里程碑触发)选哪张: ${sim.royals.map((r, i) => `第${i + 1}张=下标${i} ${r.points}分${r.ability ? `【${ABILITY_ZH[r.ability] ?? r.ability}】` : ''}`).join(' / ')}`,
       });
     } else royalAbility = sim.royals[mv.royalPick!]!.ability;
   }
@@ -207,42 +212,31 @@ async function runParse(opts: ParseOptions): Promise<ParseResult> {
   stMove = null;
   stPending = null;
   try {
-    // ---- 续答: 玩家在回答上次的追问(也可能是全新指令), 从半成品继续 ----
+    // 续答: 玩家在回答上次的追问(也可能是全新指令), 从半成品继续(跳过轮1, stBase 即半成品)
     if (opts.pending) {
       stBase = opts.pending.move;
       stSim = opts.pending.sim;
-      stLm = legalMoves(stSim);
-      if (stLm.actions.length === 0) return { move: null, reply: '当前没有可执行的强制行动' };
-      const from = s.messages.length;
-      for (let attempt = 0; attempt < 3 && !stMove; attempt++) {
-        await s.prompt(buildSayPrompt2(stSim, seat, text, opts.pending.move, stLm, opts.pending));
-        if (stMove) return { move: stMove, reply: collectText(s, from) || '已执行' };
-        const r = collectText(s, from);
-        if (r) return { move: null, reply: r, pending: stPending ?? undefined };
+    } else {
+      const lm0 = legalMoves(view);
+      const me = view.players[seat]!;
+      const canPriv = me.privileges > 0 && lm0.privilegeCells.length > 0;
+      const canRep = lm0.canReplenish;
+
+      // ---- 轮1: 解析可选行动 (仅当有特权可拿或可补货); 模型回复"跳过"是正常路径, 继续轮2 ----
+      if (canPriv || canRep) {
+        stPhase = 'optional';
+        await s.prompt(buildSayPrompt1(view, seat, opts.turn, text, canPriv, canRep));
+        stPhase = 'mandatory';
       }
-      return { move: null, reply: FALLBACK_REPLY, pending: stPending ?? undefined };
-    }
-
-    const lm0 = legalMoves(view);
-    const me = view.players[seat]!;
-    const canPriv = me.privileges > 0 && lm0.privilegeCells.length > 0;
-    const canRep = lm0.canReplenish;
-
-    // ---- 轮1: 解析可选行动 (仅当有特权可拿或可补货); 模型回复"跳过"是正常路径, 继续轮2 ----
-    if (canPriv || canRep) {
-      stPhase = 'optional';
-      await s.prompt(buildSayPrompt1(view, seat, opts.turn, text, canPriv, canRep));
-      stPhase = 'mandatory';
     }
 
     // ---- 轮2: 从(可选行动后的)编号列表选强制行动 ----
     const sim = stSim!;
-    stBase = stPart2Base();
     stLm = legalMoves(sim);
     if (stLm.actions.length === 0) return { move: null, reply: '当前没有可执行的强制行动(可能需要补货)' };
     const from2 = s.messages.length;
     for (let attempt = 0; attempt < 3 && !stMove; attempt++) {
-      await s.prompt(buildSayPrompt2(sim, seat, text, stBase, stLm));
+      await s.prompt(buildSayPrompt2(sim, seat, text, stBase, stLm, opts.pending));
       if (stMove) return { move: stMove, reply: collectText(s, from2) || '已执行' };
       const r = collectText(s, from2);
       if (r) return { move: null, reply: r, pending: stPending ?? undefined }; // 模型用文字向玩家澄清/追问
@@ -254,11 +248,6 @@ async function runParse(opts: ParseOptions): Promise<ParseResult> {
     stMove = null;
     stPending = null;
   }
-}
-
-// submit_option 会直接写 stBase(轮1 的可选部分); 轮2 把它作为 moveFromParams 基底
-function stPart2Base(): Partial<Move> {
-  return stBase;
 }
 
 async function ensureSession(model?: string, onThinking?: (s: string) => void): Promise<PiSession> {
@@ -323,7 +312,7 @@ async function ensureSession(model?: string, onThinking?: (s: string) => void): 
     parameters: Type.Object({
       i: Type.Integer({ description: '必填. 【可执行的行动】列表里的编号(1开始)' }),
       associateColor: Type.Optional(Type.String({ description: '购买百搭卡时: 叠放颜色(白/蓝/绿/红/黑, 须为玩家已有卡的颜色)' })),
-      royalPick: Type.Optional(Type.Integer({ description: '领皇家卡时: 皇家卡列表下标(0开始)' })),
+      royalPick: Type.Optional(Type.Integer({ description: '领皇家卡时: 皇家卡下标(0开始, 玩家说第n张则填 n-1)' })),
       stealPick: Type.Optional(Type.String({ description: '触发偷取时: 偷对手 token 的颜色(白/蓝/绿/红/黑/珍珠)' })),
       takeSameCell: Type.Optional(Type.String({ description: '触发「拿同色」时: 拿的棋盘坐标, 如 "B2"' })),
       discard: Type.Optional(Type.Record(Type.String(), Type.Integer({ minimum: 1 }), {
