@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'bun:test';
 import { applyMove, applyReplenish, createGame, legalMoves, playerView, type GameState } from '../src/engine/game.js';
 import {
-  actionListV3, createV3, crossesWin, oppOuts, raceBlock, shortfall, targetBlock,
+  actionListV3, createV3, crossesWin, memoBlock, oppOuts, raceBlock, shortfall, targetBlock,
 } from '../src/agents/llm3.js';
 
 /** 固定走法推进: 每步选第一个合法行动(确定性) */
@@ -49,6 +49,34 @@ describe('llm3 跨回合状态', () => {
     expect(lines).toMatch(/已被对手买走|已离开市场/);
   });
 });
+
+describe('llm3 备忘注入', () => {
+  test('make_move memo 经 memoBox 注入下回合并核对卡存活', () => {
+    const memoBox: { current?: string } = {};
+    const v3 = createV3(memoBox);
+    let st = createGame({ seed: 11 });
+    const victim = playerView(st, 0).pyramid.find((c) => c != null)!;
+    v3.contextExtra(playerView(st, 0), 0); // t0 初始化
+    memoBox.current = `计划: 下回合预留金字塔里的 ${victim!.id} 阻断对手蓝线`;
+    for (let i = 0; i < 2; i++) st = step(st); // 推进两个 ply, turnCount 变化
+    const txt = v3.contextExtra(playerView(st, 0), 0);
+    expect(txt).toContain('【上回合备忘】');
+    expect(txt).toContain(victim!.id);
+    expect(memoBox.current).toBeUndefined(); // 一次性消费
+    const txt2 = v3.contextExtra(playerView(st, 0), 0); // 同回合 phase2 不重复消费
+    expect(txt2).toContain('【上回合备忘】');
+  });
+
+  test('防守承诺未兑现且威胁仍在时标⚡', () => {
+    const st = createGame({ seed: 7 });
+    const view = playerView(st, 0);
+    const victim = view.pyramid.find((c) => c != null)!;
+    const lines = memoBlock(view, 0, `计划: 预留 ${victim!.id} 阻断对手`).join('\n');
+    expect(lines).toContain('⚡');
+    expect(lines).toContain(`仍在金字塔`);
+  });
+});
+
 
 describe('llm3 竞速与阻断', () => {
   test('对手能买致胜卡时被计为 outs 并给出裁决', () => {

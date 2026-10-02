@@ -130,6 +130,7 @@ export interface V3Memory {
   snap: Snap | null;
   ledger: string[];
   targetIds: string[];
+  memoForTurn?: string;
 }
 export const createMemory = (): V3Memory => ({ lastPly: -1, snap: null, ledger: [], targetIds: [] });
 
@@ -342,9 +343,9 @@ export function targetBlock(view: GameState, seat: 0 | 1, mem: V3Memory): string
   return lines;
 }
 
-/** 跨回合推进: 每个新 turnCount 只做一次(快照diff→流水账) */
-function advance(view: GameState, seat: 0 | 1, mem: V3Memory) {
-  if (mem.lastPly === view.turnCount) return;
+/** 跨回合推进: 每个新 turnCount 只做一次(快照diff→流水账); 返回是否刚推进(供 memo 一次性消费) */
+function advance(view: GameState, seat: 0 | 1, mem: V3Memory): boolean {
+  if (mem.lastPly === view.turnCount) return false;
   const cur = snapOf(view, seat);
   if (mem.snap && cur.ply > mem.snap.ply) {
     mem.ledger.push(diffEvents(mem.snap, cur));
@@ -352,6 +353,7 @@ function advance(view: GameState, seat: 0 | 1, mem: V3Memory) {
   }
   mem.snap = cur;
   mem.lastPly = view.turnCount;
+  return true;
 }
 
 // ---------------------------------------------------------------- 行动列表 v3: v2 去重/⚠ + 稳定卡id
@@ -387,6 +389,31 @@ export function actionListV3(sim: GameState, seat: 0 | 1, lm: LegalMoves): strin
   return lines.join('\n');
 }
 
+/** 上回合备忘: make_move 的 memo 参数原文 + 提及卡的存活核对 + 防守承诺未兑现⚡ */
+export function memoBlock(view: GameState, seat: 0 | 1, memo: string | undefined): string[] {
+  if (!memo) return ['(上回合未留备忘 — 请在本回合 make_move 附带 memo 参数: 一句话计划+对手威胁)'];
+  const me = view.players[seat]!, opp = view.players[1 - seat]!;
+  const lines = [`原文: ${memo}`];
+  const ids = [...new Set(memo.match(/\d+-\d+/g) ?? [])].slice(0, 4);
+  const inPyramid = (id: string) => view.pyramid.some((c) => c?.id === id);
+  const mine = (id: string) => me.cards.some((c) => c.def.id === id) || me.reserved.some((c) => c.id === id);
+  for (const id of ids) {
+    const slot = view.pyramid.findIndex((c) => c?.id === id);
+    const st = slot >= 0 ? `仍在金字塔${slot + 1}号`
+      : mine(id) ? '已被我买入/预留 ✓计划兑现'
+      : opp.cards.some((c) => c.def.id === id) ? '⚠已被对手买走'
+      : opp.reserved.some((c) => c.id === id) ? '⚠已被对手预留'
+      : '已离开市场';
+    lines.push(`- 卡 ${id}: ${st}`);
+  }
+  const defensive = /锁|预留|阻断|防/.test(memo);
+  const threatAlive = ids.some((id) => inPyramid(id) && !mine(id));
+  const secured = ids.some((id) => mine(id));
+  if (defensive && threatAlive && !secured)
+    lines.push('⚡你上回合承诺了锁定/阻断但尚未兑现, 威胁卡仍在市场: 本回合必须处置(买走/黄金预留/拿其缺口色)或说明放弃理由');
+  return lines;
+}
+
 // ---------------------------------------------------------------- v3 工厂
 
 export interface V3 {
@@ -395,17 +422,25 @@ export interface V3 {
   memory: V3Memory;
 }
 
-/** 纯分析部分(测试用): 两个钩子共享同一份跨回合记忆 */
-export function createV3(): V3 {
+/** 纯分析部分(测试用): 两个钩子共享同一份跨回合记忆; memoBox 接 make_move 的 memo 参数 */
+export function createV3(memoBox?: { current?: string }): V3 {
   const memory = createMemory();
   const safe = (fn: () => string): string => {
     try { return fn(); } catch (e) { console.warn(`[llm3] 分析块生成失败: ${(e as Error).message}`); return ''; }
+    };
+  const memoNow = (didAdvance: boolean): string | undefined => {
+    if (didAdvance) { // 新回合第一次钩子: 消费上回合 memo(一次性, 领外回合覆盖前一次)
+      memory.memoForTurn = memoBox?.current;
+      if (memoBox) memoBox.current = undefined;
+    }
+    return memory.memoForTurn;
   };
   return {
     memory,
     contextExtra: (view, seat) => safe(() => {
-      advance(view, seat, memory);
+      const memo = memoNow(advance(view, seat, memory));
       const blocks = [
+        `【上回合备忘】\n${memoBlock(view, seat, memo).join('\n')}`,
         `【流水账】(近${Math.min(memory.ledger.length, 8)}步)\n${memory.ledger.slice(-8).join('\n') || '(开局)'}`,
         `【目标追踪】\n${targetBlock(view, seat, memory).join('\n')}`,
         `【经济】\n${economyBlock(view, seat).join('\n')}`,
@@ -417,8 +452,8 @@ export function createV3(): V3 {
       return `\n${blocks.join('\n\n')}`;
     }),
     digest: (sim, seat, _lm) => safe(() => {
-      advance(sim, seat, memory);
-      return ['【竞速与阻断】', ...raceBlock(sim, seat), '', digestV2(sim, seat, _lm)].join('\n');
+      const memo = memoNow(advance(sim, seat, memory));
+      return [`【上回合备忘】${memo ? memoBlock(sim, seat, memo).join(' ; ') : '(无)'}`, '', '【竞速与阻断】', ...raceBlock(sim, seat), '', digestV2(sim, seat, _lm)].join('\n');
     }),
   };
 }
@@ -449,25 +484,25 @@ const SYSTEM_PROMPT_V3 = `你是 Splendor Duel(璀璨宝石对决)棋手, 目标
   use_privilege 给出格子坐标数组(一次1-3格, 可多次调用直到特权用完); 都不划算就 skip_optional.
   补货后仍可用特权(按先补货后特权执行), 但特权与补货不能交错多次.
   可选阶段结束(含调用 skip_optional 之后)请停止调用工具结束本轮, 等待下一条消息.
-- 阶段2: 工具 make_move, 从【本条消息】的编号行动列表中选 i(必填), 需要时带条件参数.
+- 阶段2: 工具 make_move, 从【本条消息】的编号行动列表中选 i(必填), 需要时带条件参数(可选 memo: 一句话计划备忘, 下回合注入供核对).
   编号列表每回合重新生成, 严禁复用旧消息里的编号.
 - 参数校验是严格的: 百搭卡颜色/皇家卡选择/偷取颜色/拿同色格/超10弃置, 只要被触发就必须显式给出且合法,
   缺失或非法会返回具体错误提示(含可选值清单), 按提示修正后重新调用即可, 不会静默采用默认值.
 - 不要输出 JSON 文本, 只用工具.
 
 == 代码侧分析块(每回合注入, 全部由引擎状态推导, 是客观事实; 与你的记忆冲突时以分析块为准) ==
-【流水账】双方近几步事件(按卡id辨认买/留) | 【目标追踪】你的近目标+缺口+存活状态(被截会显式宣布+给替代候选)
+【上回合备忘】你上回合的 memo 原文+提及卡的存活状态(承诺未兑现会标⚡) | 【流水账】双方近几步事件(按卡id辨认买/留) | 【目标追踪】你的近目标+缺口+存活状态(被截会显式宣布+给替代候选)
 【竞速与阻断】双方0/1/2回合可买与胜线、对手outs计数 | 【经济】特权/黄金/额外回合差
 【牌库匹配】未见高分卡按色分布+折扣溢出预警 | 【安全阀】 | 【补货/预留建议】 | 【阶段判定】
 ⚡开头的行是触发条件命中的战术铁律: 每条要么执行, 要么用一句话说明为何不适用; 不允许无视.
 
 == 每回合思考流程(先读分析块, 再逐项一行短句; 每项必须引用分析块的数字/结论, 禁止复述局面) ==
-0. 对表: 【流水账】+【目标追踪】 vs 我上回合备忘 — 目标还在吗? 失效就先用给出的替代候选, 更新备忘.
+0. 对表: 【上回合备忘】(你上回合 make_move 附带的 memo) + 【目标追踪】 vs 当前局面 — 计划里的卡还活着吗? 已被对手买走就立即换到给出的替代候选; 若备忘承诺了锁定/阻断而未兑现(⚡行), 本回合必须处置或说明放弃理由.
 1. 竞速: 引用【竞速与阻断】=> 我领先/持平/落后; 对手outs=? (outs≥2 => 不阻断只抢跑; outs=1 => 阻断与抢跑取更快者; 0 => 推进自己计划).
 2. 阶段: 引用【阶段判定】的第一优先级.
 3. 经济: 【经济】+【安全阀】; 可选阶段先读【补货/预留建议】再决定 use_privilege/use_replenish/skip.
 4. 选择: 双目的最优; 棋盘有黄金且预留未满3 => 认真读【预留评估】, 预留=拿万能金+锁卡二合一.
-提交前一行"备忘: 目标(带卡id)+对手最大威胁"(下回合第0步先核对).
+提交 make_move 时附带 memo 参数(≤80字): 本回合决定 + 下回合计划(带卡id) + 对手最大威胁; 它会在下回合原样注入, 与之冲突的计划必须说明原因.
 
 == 战术攻略(splendortactics.com 全部攻略 + 高分玩家数据提炼, 务必遵守) ==
 [基本盘] 全局仅15-20回合, 浪费一回合≈输掉5-7%胜率; 胜率统计: 20分~65% / 同色10分~20% / 10冠~10%; 高手平均皇冠≈5.6, 皇家卡≈1.5 => 顺路凑3-6皇冠拿皇家是基线而非可选. 袋内容公开可算: 各色4+珍珠2+黄金3减去棋盘与双方持有即得.
@@ -488,9 +523,11 @@ const SYSTEM_PROMPT_V3 = `你是 Splendor Duel(璀璨宝石对决)棋手, 目标
 [v3数字规则] 折扣颜色跟随【牌库匹配】的剩余分分布, 单色折扣>3仅当明确走单色胜利线; 额外回合卡差≥2时市场新出的额外回合卡优先截; 对手outs≥2时放弃阻断全力抢跑; 任何时刻保持安全阀; 第15回合仍<8分立即转买分(【阶段判定】会提示).`;
 
 export function llm3Agent(opts: LlmOptions = {}): Agent {
-  const v3 = createV3();
+  const memoBox: { current?: string } = {};
+  const v3 = createV3(memoBox);
   return llmAgent({
     ...opts,
+    memoBox,
     name: opts.name ?? 'LLM3',
     systemPrompt: opts.systemPrompt ?? SYSTEM_PROMPT_V3,
     contextExtra: (view, seat) => {

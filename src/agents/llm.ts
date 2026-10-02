@@ -103,6 +103,8 @@ export interface LlmOptions {
   actionList?: (sim: GameState, seat: 0 | 1, lm: LegalMoves) => string;
   /** 阶段2 行动列表前的分析摘要 (送特权警示/预留评估等) */
   digest?: (sim: GameState, seat: 0 | 1, lm: LegalMoves) => string;
+  /** make_move 成功时的 memo 参数写入这里 (外层 agent 读取后注入下回合上下文, v3 用) */
+  memoBox?: { current?: string };
 }
 
 const DEFAULT_MODEL = 'opencode-go/deepseek-v4.1-flash';
@@ -321,6 +323,9 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
         description: '回合末 token 超 10 时必须给出: 如 {"白": 2, "珍珠": 1}; 键为颜色中文, 总数须正好等于超出量',
       }),
     ),
+    memo: Type.Optional(Type.String({
+      description: '可选. 一句话备忘(≤80字): 本回合决定 + 下回合计划(带卡id) + 对手最大威胁; 会在下回合开头原样注入供你核对, 计划变更时需说明原因',
+    })),
   });
 
   const moveTool = defineTool({
@@ -454,6 +459,8 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
       }
       slot.part = move;
       slot.submitted = true;
+      if (opts.memoBox && typeof params.memo === 'string' && params.memo.trim())
+        opts.memoBox.current = params.memo.trim().slice(0, 120); // 成功才写入, 后一次(额外回合)覆盖前一次
       return ok('OK, 走法已接受');
     },
   });
@@ -561,7 +568,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     if (opts.digest) lines.push('', opts.digest(sim, ctx.seat, lm));
     lines.push('', `【可执行的行动】(编号 i, 共 ${lm.actions.length} 个):`);
     lines.push(opts.actionList ? opts.actionList(sim, ctx.seat, lm) : stripAnsi(renderActions(sim, ctx.seat, lm)));
-    lines.push('', '调用 make_move 提交 (i 必填; 触发时必填: associateColor=买百搭卡选色 / royalPick=领皇家卡下标 / stealPick=偷取颜色 / takeSameCell=拿同色格 / discard=超10弃置. 缺失会返回错误并列出可选值, 按提示补齐重调):');
+    lines.push('', '调用 make_move 提交 (i 必填; 触发时必填: associateColor=买百搭卡选色 / royalPick=领皇家卡下标 / stealPick=偷取颜色 / takeSameCell=拿同色格 / discard=超10弃置. 缺失会返回错误并列出可选值, 按提示补齐重调; memo 可选: 一句话计划备忘, 下回合注入):');
     if (failMsg) lines.push(`上一次失败: ${failMsg}\n请调用 make_move 工具提交合法走法.`);
     return lines.join('\n');
   }

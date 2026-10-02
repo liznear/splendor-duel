@@ -27,7 +27,7 @@ bun test             # 引擎规则自检 (Web e2e 见下)
 | `greedy` | 1 层前瞻 + 启发式估值（对随机胜率 ~80%） |
 | `llm[:provider/model][@level]` | 大模型棋手 v1；缺省用 `opencode-go/deepseek-v4.1-flash`（OPENCODE_API_KEY）；`@level` 可选 `off/low/medium/high` 控制思考预算（缺省 medium），如 `llm:anthropic/claude-sonnet-4-5@low` |
 | `llm2[:provider/model][@level]` | 大模型棋手 v2（同默认模型/参数），在 v1 之上叠加确定性分析修复实测缺陷：预留评估摘要（黄金=万能/锁卡价值， 按可负担性排序）、行动列表预留按卡去重（金格等价）、送特权拿取内联 ⚠ 标注（3同色/2珍珠）、【对手预留进度】预警（还差几个 token/是否跨胜利线）、规则措辞防误解（黄金是拿入手非支付） |
-| `llm3[:provider/model][@level]` | 大模型棋手 v3（同默认模型/参数），把「记忆与算术」从模型搬进代码（源自 gpt-6.1-sol 败局复盘的 6 个败因）：【流水账】跨回合事件、【目标追踪】按卡 id 跟踪并宣布被截+替代候选、【竞速与阻断】双方 0/1/2 回合胜线与对手 outs 计数（outs≥2 不阻断只抢跑）、【经济】特权/黄金/额外回合差、【牌库匹配】未见高分卡按色+折扣溢出预警、【安全阀】【补货/预留建议】检查项化、⚡情境规则触发时注入。A/B：`bun scripts/compare.ts 6 --a llm3 --baseline llm2 --thinking low` |
+| `llm3[:provider/model][@level]` | 大模型棋手 v3（同默认模型/参数），把「记忆与算术」从模型搬进代码（源自 gpt-6.1-sol 败局复盘的 6 个败因）：【流水账】跨回合事件、【目标追踪】按卡 id 跟踪并宣布被截+替代候选、【上回合备忘】make_move 附带 memo 参数→下回合原样注入+提及卡存活核对+防守承诺未兑现⚡、【竞速与阻断】双方 0/1/2 回合胜线与对手 outs 计数（outs≥2 不阻断只抢跑）、【经济】特权/黄金/额外回合差、【牌库匹配】未见高分卡按色+折扣溢出预警、【安全阀】【补货/预留建议】检查项化、⚡情境规则触发时注入。A/B：`bun scripts/compare.ts 6 --a llm3 --baseline llm2 --thinking low` |
 
 LLM agent 每回合分两个阶段与模型交互（工具全程注册激活， 阶段约束由各工具内部校验并以中文错误提示， 避免 SDK 层 tool-not-found 裸错误）：
 
