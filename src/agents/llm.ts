@@ -6,8 +6,8 @@
 // 特权拿取不消耗随机数, 补货洗牌只依赖袋内容 => 最终拼装的 Move 交给引擎时与模拟完全一致.
 import type { Agent, TurnContext } from './agent.js';
 import {
-  applyMove, applyOption, type CardDef, type GameState, legalMoves, type LegalMoves,
-  maxColorPointsOf, type Move, type NonGold, ownedColors, type TokenColor, type Gem,
+  applyMove, applyOption, canBuy, type CardDef, type GameState, legalMoves, type LegalMoves,
+  maxColorPointsOf, type Move, type NonGold, ownedColors, type PlayerState, type TokenColor, type Gem,
 } from '../engine/game.js';
 import { ABILITY_ZH, actionText, cellIndex, cellName, GEM_ZH, renderActions, TOKEN_ZH } from '../render.js';
 import { fallbackMove } from './random.js';
@@ -65,25 +65,28 @@ const SYSTEM_PROMPT = `你是 Splendor Duel(璀璨宝石对决)棋手, 目标是
   缺失或非法会返回具体错误提示(含可选值清单), 按提示修正后重新调用即可, 不会静默采用默认值.
 - 不要输出 JSON 文本, 只用工具.
 
-== 战术攻略(源自 splendortactics.com, 务必遵守) ==
-关键数字: token上限10; 黄金全局仅3枚; 皇冠3/6触发皇家卡; 对手7皇冠=红色警报(一张2皇冠卡即10冠获胜);
-15分后一张L3+皇家卡可一波到20; 对手单色6-7分=颜色胜利威胁; L2卡总价一律7(折扣后实付差异巨大);
-全局仅15-20回合, 浪费一回合≈输掉5-7%的胜率.
-袋内容是公开可推算的: 各色4+珍珠2+黄金3, 减去棋盘与双方持有即得袋中成分; 补货/等对手补货前先算清楚袋里会出什么.
+== 每回合思考流程(严格按清单逐项一行短句, 禁止复述局面/长篇分析; 可选行动阶段尤其从简) ==
+1. 威胁: 对手下回合能赢吗(看报告中【对手威胁】)? 能 => 一切让位于阻断(买走/预留其获胜卡/拿走其所需色).
+2. 对手路线: 对手在冲哪条胜利路线(20分/10冠/同色10分)? 本步如何顺带干扰(拿其色/买走其目标卡/预留)?
+3. 我的计划: 我的2-3回合目标(下两张买什么/冲哪条路线)? 对照上回合备忘, 计划变了就更新.
+4. 选择: 选同时推进第3项和第2项的行动(双目的最优).
+每次提交走法前, 用一行"备忘:"总结当前计划+对手最大威胁(下回合开头先读自己的备忘).
 
-每回合5秒习惯(先于思考自己): 数对手的总分/皇冠数/单色最高分——这是对手能赢你的三个数字;
-问一句"对手下回合能否获胜?"——能则一切让位于阻断(买走/预留关键卡/拿走其所需色).
-
-核心原则:
-- 宝石是燃料不是财富. 能买卡就买; 攒4-5个token却没有下回合的购买计划=浪费复合优势.
-- 前5回合买L1建引擎: 0分但折扣颜色正确的卡 > 1分但折扣无用的卡; L2/L3费用中出现最多的颜色优先拿折扣.
-- 珍珠无折扣可抵, 全局仅2枚, 开局就抢; 「额外回合」能力的卡优先级最高(白拿一回合).
-- 黄金是过桥不是存款, 1-2回合内花掉; 预留=手术刀不是策略: 只预留2-3回合内买得起的卡, 通常不超过1张.
-- 拿token默认拿3个不同色的直线; 两个选择对自己等价时, 拿走对手需要的那个(免费防守);
-  拿3同色或2珍珠会送对手特权, 慎重; 对手预留满3张时其无法再预留, 趁窗口抢节奏.
-- 10-12回合前保持至少两条胜利路径(分/皇冠/单色), 之后全速冲一条; 领先抢节奏结束, 落后用封锁拖慢.
-- 对手7+皇冠 => 皇冠封锁最优先; 对手单色7+分 => 高分卡和百搭卡优先抢/预留; 百搭卡能让颜色胜利从7跳到10.
-- 皇家卡约等于免费分, 顺路凑皇冠不亏; 购买时问自己"这张卡让我离胜利更近吗?" 否则继续找.`;
+== 战术攻略(splendortactics.com 全部攻略 + 高分玩家数据提炼, 务必遵守) ==
+[基本盘] 全局仅15-20回合, 浪费一回合≈输掉5-7%胜率; 胜率统计: 20分~65% / 同色10分~20% / 10冠~10%; 高手平均皇冠≈5.6, 皇家卡≈1.5 => 顺路凑3-6皇冠拿皇家是基线而非可选. 袋内容公开可算: 各色4+珍珠2+黄金3减去棋盘与双方持有即得.
+[思考维度] 每回合先看对手棋盘再看自己的: 对手总分/皇冠/单色最高分三个数字(报告已自动检测并列入【对手威胁】); 三个警戒线: 对手15分 / 7皇冠 / 单色6-7分.
+[核心心态] 这是 Duel 不是单人跑分: 被动发育=输. 每颗宝石拿了对手就少一颗, 每张卡买了就退出市场. 攻防同体: 等价选择中拿对手需要的那个是免费防守.
+[买卡优先级·数据] 赢家平均买17张: L1×10 + L2×4 + L3×2 + 皇家1.5张; 中局时手里没有6-7张L1 = 引擎投资不足.
+- L1: 皇冠卡(3费1冠)>拿同色(2+2)>额外回合(2+2+珍珠)>四色(1×4)>1分卡(3+2). 0分别折扣色正确 > 1分别折扣无用; 买前问"这个折扣让哪张未来的卡变便宜?"答不出就换.
+- L2(一律总价7): 2分1冠(2+2+2+珍珠)>偷取(4+3)>双折扣(5+2)>特权(4+2+珍珠).
+- L3: 3分2冠(5+3+3+珍珠)与4分(6+2+2)是最佳收官; 8费金卡几乎没人买.
+- 无折扣金卡全是陷阱(L1/L2/L3合计不到1/3赢家买过一张): 分数不逃引擎, 除非直接终结.
+- 能力强度: 额外回合 >> 偷取(2宝石摆动) > 拿同色 > 特权. 额外回合卡出现在市场就认真考虑预留.
+- 皇家卡选择同理: 额外回合 > 偷取 > 3分 > 特权.
+[开局] 珍珠开局必抢(首回合拿走的token里1/3是珍珠, 回合2就没了; 珍珠无法被折扣抵免). 后手标准强开局: 特权拿珍珠+预留皇冠卡(得黄金). 首购回合3-5, 最强首购=额外回合卡; 皇冠卡更多是被预留而非首购. 前5回合未买卡不慌, 但每回合必须有明确目的.
+[token纪律] 宝石是燃料不是财富, 攒4-5个却无下回合购买计划=浪费; 拿3异色优先, 且尽量让3色同时服务两张卡(主目标+顺路L1). 黄金是过桥不是存款, 1-2回合内花掉. 预留=手术刀: 只预留2-3回合内买得起的卡; 手里始终留1张随时买得起的便宜卡当"安全阀"(让对手被迫补货而你吃特权). 拿3同色或2珍珠会送对手特权, 慎重. 超10弃置提前规划.
+[防守时机] 前5回合几乎不阻断(自建引擎优先); 中局只做双目的阻断; 危局(对手15分/7冠/单色7分)阻断开为一等公民. 三个具体防守: 对手要拿偷取卡=>先花掉珍珠; 对手下一买触发皇家卡=>用黄金预留那张皇冠卡; 对手能先你买走目标卡=>立即转向别再攒那色.
+[胜利路线] 10-12回合前保持至少两条胜利路径(分/皇冠/单色)形成压力迫使对手分散防守, 之后全速冲一条; 领先抢节奏结束, 落后用封锁拖慢. 同色胜利多在中局自然形成: 每次购买后统计自己单色分数, 6-7分时盯住该色高分卡和百搭卡(百搭能让颜色胜利从7跳到10).`;
 
 export interface LlmOptions {
   name?: string;
@@ -146,6 +149,11 @@ function playerCompact(view: GameState, seat: 0 | 1): string {
   ].join('\n');
 }
 
+/** 某颜色列的分数(同色胜利用); 百搭卡由调用方按最优色处理 */
+function colorPointsOf(p: PlayerState, color: Gem): number {
+  return p.cards.filter((c) => c.color === color).reduce((s, c) => s + c.def.points, 0);
+}
+
 /** 共享局面块(不含行动列表), 供 LLM 棋手两阶段与自然语言解析器复用 */
 export function buildContext(view: GameState, seat: 0 | 1): string {
   const me = view.players[seat]!;
@@ -175,6 +183,27 @@ export function buildContext(view: GameState, seat: 0 | 1): string {
   if (maxColorPointsOf(opp) >= 7) threats.push(`对手单色最高 ${maxColorPointsOf(opp)}/10 分 => 高分卡/百搭卡警惕被其凑满`);
   if (opp.points >= 15) threats.push(`对手 ${opp.points}/20 分, 一张L3+皇家卡可能一波结束 => 评估其下回合能否获胜`);
   if (me.points >= 15 || me.crowns >= 8 || maxColorPointsOf(me) >= 8) threats.push(`我方已接近胜利(${me.points}分/${me.crowns}冠/单色${maxColorPointsOf(me)}分), 优先冲终点而非发育`);
+
+  // 对手已能直接购买的卡(金字塔+明留): 自动回答"对手下回合能否获胜"
+  const buys: string[] = [];
+  const candidates: { c: CardDef; where: string }[] = [
+    ...view.pyramid.map((c, i) => (c ? { c, where: `金字塔${i + 1}` } : null)),
+    ...opp.reserved.map((c, i) => (c && c.id !== 'hidden' ? { c, where: `对手已留${i + 1}` } : null)),
+  ].filter((x): x is { c: CardDef; where: string } => x !== null);
+  for (const { c, where } of candidates) {
+    if (!canBuy(opp, c)) continue;
+    const pts = opp.points + c.points;
+    const cr = opp.crowns + c.crowns;
+    const cp = c.isAssociate ? maxColorPointsOf(opp) + c.points : c.color ? colorPointsOf(opp, c.color) + c.points : 0;
+    const wins: string[] = [];
+    if (pts >= 20) wins.push(`总分${pts}`);
+    if (cr >= 10) wins.push(`${cr}冠`);
+    if (cp >= 10) wins.push('单色10分');
+    const royal = (opp.royalsTaken === 0 && cr >= 3) || (opp.royalsTaken === 1 && cr >= 6);
+    if (wins.length) buys.push(`${where}: ${cardCompact(c)} => 买后${wins.join('+')}获胜, 必须阻断!`);
+    else if (royal) buys.push(`${where}: ${cardCompact(c)} => 买后触发皇家卡, 分数可能跳跃`);
+  }
+  if (buys.length) threats.push(`对手现在就能买: \n- ${buys.slice(0, 6).join('\n- ')}`);
   if (threats.length) lines.push('', `【威胁检测】\n- ${threats.join('\n- ')}`);
   return lines.join('\n');
 }

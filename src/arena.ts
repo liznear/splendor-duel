@@ -6,15 +6,22 @@ import {
 } from './engine/game.js';
 import { fallbackMove } from './agents/random.js';
 import { renderState, logTail } from './render.js';
+import { GameRecorder, type RecMeta } from './recorder.js';
 
 export interface MatchOptions {
   seed?: number;
+  firstSeat?: 0 | 1; // 缺省随机; 会记入会话 meta 供重放
   maxTurns?: number;
   /** 每步之后展示局面(人机模式) */
   showState?: (state: GameState, seat: 0 | 1) => void;
   /** 展示行动日志 */
   onMove?: (state: GameState) => void;
   verbose?: boolean;
+  /** 从已重放的状态继续对局(resume); resumePrefix 使新会话文件自包含可重放 */
+  initialState?: GameState;
+  resumePrefix?: RecMeta['resume'];
+  /** 写会话记录到 sessions/ (默认开; 测试可关) */
+  record?: boolean;
 }
 
 export interface MatchResult {
@@ -23,6 +30,8 @@ export interface MatchResult {
   turns: number;
   finalState: GameState;
   illegalBy?: [string, number];
+  /** 本局会话记录文件(未开启记录时为 undefined) */
+  recorderPath?: string;
 }
 
 export async function playMatch(
@@ -30,7 +39,13 @@ export async function playMatch(
   opts: MatchOptions = {},
 ): Promise<MatchResult> {
   const maxTurns = opts.maxTurns ?? 600;
-  let state = createGame({ seed: opts.seed });
+  const seed = opts.seed ?? Math.floor(Math.random() * 2 ** 31);
+  let state = opts.initialState ?? createGame({ seed, names: [agents[0].name, agents[1].name], ...(opts.firstSeat !== undefined ? { firstSeat: opts.firstSeat } : {}) });
+  const recorder = opts.record === false ? null : new GameRecorder(
+    opts.resumePrefix
+      ? { ...opts.resumePrefix, names: [agents[0].name, agents[1].name], specs: null, resumedFrom: 'replay' }
+      : { seed, names: [agents[0].name, agents[1].name], firstSeat: state.current }, // turnCount=0 时 current 即先手
+  );
   let illegalCount = 0;
 
   while (state.winner === null && !state.draw) {
@@ -47,6 +62,7 @@ export async function playMatch(
     // 无强制行动可行时自动补货(对手得 1 特权)
     let lm = legalMoves(state);
     if (lm.mustReplenish) {
+      recorder?.replenish();
       state = applyReplenish(state);
       lm = legalMoves(state);
       if (lm.actions.length === 0) continue; // 仍无法行动 -> 下一轮判和
@@ -65,6 +81,7 @@ export async function playMatch(
     let move: Move;
     try {
       move = await agent.chooseMove(ctx);
+      recorder?.move(seat, state.turnCount, move, undefined, agent.lastRaw || undefined);
       state = applyMove(state, move);
     } catch (err) {
       illegalCount++;
@@ -72,6 +89,7 @@ export async function playMatch(
       state.log.push(`⚠ ${name} 走法非法(${(err as Error).message}), 改用兜底`);
       if (illegalCount > 40) throw err;
       move = fallbackMove(ctx);
+      recorder?.move(seat, state.turnCount, move);
       state = applyMove(state, move);
     }
     opts.onMove?.(state);
@@ -83,7 +101,9 @@ export async function playMatch(
     turns: state.turnCount,
     finalState: state,
   };
+  recorder?.result(state.winner, state.turnCount);
   for (const a of agents) a.onGameOver?.(result);
+  result.recorderPath = recorder?.path;
   return result;
 }
 

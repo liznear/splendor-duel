@@ -321,8 +321,8 @@ describe('引擎健壮性', () => {
         },
       };
     };
-    const a = await playMatch([seededAgent(7), seededAgent(8)] as never, { seed: 123 });
-    const b = await playMatch([seededAgent(7), seededAgent(8)] as never, { seed: 123 });
+    const a = await playMatch([seededAgent(7), seededAgent(8)] as never, { seed: 123, record: false });
+    const b = await playMatch([seededAgent(7), seededAgent(8)] as never, { seed: 123, record: false });
     expect(a.turns).toBe(b.turns);
     expect(a.winner).toBe(b.winner);
     expect(a.finalState.log).toEqual(b.finalState.log);
@@ -366,7 +366,7 @@ describe('引擎健壮性', () => {
     const { greedyAgent } = await import('../src/agents/greedy.ts');
     const { playMatch } = await import('../src/arena.ts');
     for (let seed = 0; seed < 5; seed++) {
-      const r = await playMatch([greedyAgent('G1'), greedyAgent('G2')], { seed: 500 + seed });
+      const r = await playMatch([greedyAgent('G1'), greedyAgent('G2')], { seed: 500 + seed, record: false });
       expect(r.draw || r.winner !== null).toBeTrue();
       expect(r.turns).toBeLessThan(600);
     }

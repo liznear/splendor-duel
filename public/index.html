@@ -8,7 +8,7 @@
 </head>
 <body>
 <header>
-  <h1>💎 璀璨宝石对决 <span class="en">Arena</span></h1>
+  <h1 id="logo" title="回到主页">💎 璀璨宝石对决 <span class="en">Arena</span></h1>
   <button id="btn-new" class="ghost">新对局</button>
 </header>
 
@@ -17,6 +17,7 @@
   <div class="tabs">
     <button class="tab active" data-mode="human">👤 人机对战</button>
     <button class="tab" data-mode="agents">🤖 Agent 对战</button>
+    <button class="tab" data-mode="resume">📁 继续对局</button>
   </div>
 
   <div id="setup-human" class="setup-body">
@@ -59,6 +60,11 @@
     </label>
     <button id="btn-start-agents" class="primary">开始对局</button>
   </div>
+
+  <div id="setup-resume" class="setup-body hidden">
+    <p class="hint">点击任意会话从当前位置继续(按原配置重建); 新对局的 URL 会带 #会话文件, 刷新页面自动续局。</p>
+    <div id="r-list" class="session-list"><div class="session-empty">加载中...</div></div>
+  </div>
   <p class="hint">规则: 5×5 棋盘拿 token → 买卡攒折扣/分数/皇冠; 胜利条件: 20分 或 10皇冠 或 同色10分。</p>
 </section>
 
@@ -83,8 +89,6 @@
     <div class="col players-col">
       <h2>玩家</h2>
       <div id="players"></div>
-      <h2>日志</h2>
-      <div id="log" class="log"></div>
     </div>
   </div>
 
@@ -97,20 +101,12 @@
       <span id="turn-indicator"></span>
     </div>
     <div id="human-controls">
-      <div id="thinking" class="hidden">⏳ 对手思考中…</div>
       <div id="bot-msg" class="hidden">
         <button id="bot-msg-toggle" class="ghost">🤖 LLM 输出 ▸</button>
         <pre id="bot-msg-body" class="hidden"></pre>
       </div>
       <div id="human-turn">
-        <div id="say-bar">
-          <input id="say-input" type="text" placeholder='💬 文字指挥: 如 "买金字塔3号" / "拿B2C2" / "用特权拿D4再买预留1"' autocomplete="off">
-          <button id="btn-say" class="ghost">执行</button>
-          <span id="say-status"></span>
-        </div>
         <div id="pick-bar" class="pick-bar"></div>
-        <div id="extras" class="extras"></div>
-        <button id="btn-submit" class="primary" disabled>提交走法</button>
         <div id="move-error" class="error"></div>
       </div>
     </div>

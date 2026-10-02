@@ -212,7 +212,8 @@ export function createGame(opts: SetupOptions = {}): GameState {
 
   st.royals = ROYALS.map((r) => ({ ...r }));
   // 先手: 可指定 (缺省随机); 后手获得 1 特权
-  st.current = opts.firstSeat ?? (rng() < 0.5 ? 1 : 0);
+  const firstSeatDraw = rng(); // 无论是否显式指定先手都消耗一次 rng, 保证同 seed 同 rng 流(重放一致性)
+  st.current = opts.firstSeat ?? (firstSeatDraw < 0.5 ? 1 : 0);
   st.players[1 - st.current]!.privileges = 1;
   return st;
 }

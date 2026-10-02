@@ -50,6 +50,7 @@ function cardTitle(def, chosenColor) {
 /** 图片实体卡: /cards/{id}.png, 槽号 + 悬停/选中环 */
 function cardEl(c, opts = {}) {
   const card = el('div', `card img-card${opts.clickable ? ' clickable' : ''}${opts.selected ? ' selected' : ''}`);
+  if (opts.slot != null) card.append(span('slot', String(opts.slot + 1)));
   const img = el('img');
   img.src = `/cards/${c.id}.png`;
   img.alt = cardTitle(c);
@@ -146,16 +147,15 @@ function validTakeSet(cs) {
 
 const goldCells = () => G.view.board.map((t, i) => (t === 'gold' ? i : -1)).filter((i) => i >= 0);
 
-/** 回合内可分步执行: 特权 → 补货 → 主行动 */
+/** 特权/补货是低频可选行动: 不自动弹窗, 由侧栏按钮按需打开 */
 function freshUi() {
-  const base = { pick: null, action: null, privileges: [], phase: startPhase(), takeSamePick: null, extras: {}, hint: '', optDone: { priv: false, rep: false }, asked: { priv: false, rep: false }, discardExcess: -1 };
-  return base;
+  return { pick: null, action: null, privileges: [], phase: 'main', takeSamePick: null, extras: {}, hint: '', discardExcess: -1, extrasOpen: false, showBotMove: false };
 }
-function startPhase() {
-  const me = G.view.players[G.seat];
-  if (myTurn() && me.privileges > 0 && G.legal.privilegeCells.length > 0) return 'priv';
-  if (myTurn() && canReplenishNow()) return 'replenish';
-  return 'main';
+/** bot 走完后展示其操作回顾 (需要关闭才回到棋盘) */
+function revealBotMove() {
+  ui = freshUi();
+  ui.showBotMove = !G.over && (G.recentMoves?.length ?? 0) > 0;
+  render();
 }
 function canReplenishNow() {
   return G.legal?.canReplenish && G.legal.actions.length > 0 && G.view.board.some((t) => t == null);
@@ -171,24 +171,34 @@ function pickCell(i) {
     else if (ui.privileges.length < me.privileges) ui.privileges.push(i);
   } else if (myTurn() && ui.phase === 'main' && ui.action?.action.kind === 'buy' && takeSameNeeded() && cellOfMyCardColor(i)) {
     ui.takeSamePick = i;
-  } else if (myTurn() && ui.phase === 'main' && ui.pick?.want === 'reserve' && t === 'gold') {
-    ui.pick.goldCell = i;
-    tryMatchReserve();
   } else if (myTurn() && ui.phase === 'main' && ui.pick?.t === 'take') {
     const k = ui.pick.cells.indexOf(i);
-    if (k >= 0) ui.pick.cells.splice(k, 1);
+    const isAdd = k < 0;
+    if (k >= 0) ui.pick.cells.splice(k, 1); // 点击已选格 = 取消选择
     else ui.pick.cells.push(i);
     if (!validTakeSet(ui.pick.cells)) { ui.pick.cells = ui.pick.cells.slice(0, 1); } // 回退到单选
     if (ui.pick.cells.length === 0) ui.pick = null;
     tryMatchTake();
+    // 仅新增时选满自动提交; 取消选择后停留等确认, 可继续加/减
+    if (isAdd && ui.action && !takeExtendable()) { render(); afterActionChosen(); return; }
   } else if (myTurn() && ui.phase === 'main' && t != null && t !== 'gold') {
     ui.pick = { t: 'take', cells: [i] };
     tryMatchTake();
+    if (ui.action && !takeExtendable()) { render(); afterActionChosen(); return; }
   }
   render();
 }
 function tryMatchTake() {
+  if (!ui.pick) { ui.action = null; return; } // 全部取消选择时回到空状态
   ui.action = matchAction({ kind: 'take', cells: sortedCells(ui.pick.cells) });
+}
+/** 当前拿取选择是否还能延长 (存在包含它且更长的合法 take); 不能延长则自动提交 */
+function takeExtendable() {
+  if (ui.pick?.t !== 'take' || !ui.action) return false;
+  const cur = sortedCells(ui.pick.cells).join();
+  return G.legal.actions.some((a) => a.action.kind === 'take'
+    && a.action.cells.length > ui.pick.cells.length
+    && sortedCells(a.action.cells.filter((c) => ui.pick.cells.includes(c))).join() === cur);
 }
 function tryMatchReserve() {
   if (ui.pick.goldCell == null) return;
@@ -209,24 +219,19 @@ function pickPyramidCard(slot) {
   ui.pick = { t: 'card', slot };
   render();
 }
-/** 点击自己预留卡 */
+/** 点击自己预留卡: 打开放大详情再决定 */
 function pickReservedCard(index) {
   if (!myTurn()) return;
-  const from = { kind: 'reserved', index };
-  const matched = matchAction({ kind: 'buy', from });
-  if (!matched && ui.privileges.length === 0) { ui.hint = '这张预留卡当前买不起 (可先用特权拿 token 再点)'; render(); return; }
+  ui.action = null; ui.extras = {}; ui.takeSamePick = null; ui.hint = '';
   ui.pick = { t: 'buyRes', index };
-  ui.extras = {}; ui.takeSamePick = null;
-  ui.action = matched ?? { i: -1, action: { kind: 'buy', from } };
-  ui.hint = '';
   render();
 }
-/** 点击牌库(盲留) */
+/** 点击牌库(盲留): 打开放大详情 */
 function pickDeck(level) {
   if (!myTurn()) return;
   ui.action = null;
   ui.extras = {}; ui.takeSamePick = null;
-  ui.pick = { t: 'deck', level, want: 'reserve' };
+  ui.pick = { t: 'deck', level, want: null };
   render();
 }
 
@@ -235,7 +240,72 @@ document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () 
   document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x === t));
   $('#setup-human').classList.toggle('hidden', t.dataset.mode !== 'human');
   $('#setup-agents').classList.toggle('hidden', t.dataset.mode !== 'agents');
+  $('#setup-resume').classList.toggle('hidden', t.dataset.mode !== 'resume');
+  if (t.dataset.mode === 'resume') loadSessions();
 }));
+
+async function loadSessions() {
+  const box = $('#r-list');
+  box.textContent = '';
+  try {
+    const list = await api('/api/sessions'); // 服务端已按新到老排序
+    if (!list.length) { box.appendChild(el('div', 'session-empty', '还没有会话记录 —— 先开一局吧'));
+      return; }
+    for (const s of list) {
+      const row = el('div', 'session-row');
+      // 左: 日期/时间
+      const st = String(s.started ?? '');
+      const time = el('div', 'session-time');
+      time.appendChild(el('div', 'd', st.slice(5, 10).replace('-', '/')));
+      time.appendChild(el('div', 't', st.slice(11, 16)));
+      row.appendChild(time);
+      // 中: 对阵 + 标签
+      const main = el('div', 'session-main');
+      const players = el('div', 'session-players');
+      players.appendChild(span('', String(s.names?.[0] ?? '?')));
+      players.appendChild(el('span', 'vs', 'vs'));
+      players.appendChild(span('', String(s.names?.[1] ?? '?')));
+      main.appendChild(players);
+      const sub = el('div', 'session-sub');
+      sub.appendChild(el('span', 'chip', s.mode === 'human' ? '人机' : 'Agent'));
+      const botSpecs = (s.specs ?? []).filter((x) => x && x !== 'human');
+      if (botSpecs.length) sub.appendChild(el('span', 'chip', botSpecs.join(' / ').slice(0, 40)));
+      if (s.outcome !== '未完' && s.turns != null) sub.appendChild(el('span', 'chip', `${s.turns}回合`));
+      main.appendChild(sub);
+      row.appendChild(main);
+      // 右: 状态徽章
+      if (s.outcome === '未完') {
+        const b = el('div', 'session-badge open');
+        b.appendChild(span('', '未完'));
+        b.appendChild(el('span', 'n', String(s.moves)));
+        b.appendChild(span('', '步'));
+        row.appendChild(b);
+      }
+      else if (s.outcome === 'draw') row.appendChild(el('div', 'session-badge draw', '和局'));
+      else {
+        const wi = Number(String(s.outcome)[1]) || 0;
+        const wn = String(s.names?.[wi] ?? `P${wi + 1}`).slice(0, 12);
+        const b = el('div', 'session-badge win');
+        b.appendChild(span('', `${wn} 胜`));
+        row.appendChild(b);
+      }
+      row.addEventListener('click', async () => {
+        row.classList.add('busy');
+        try { startGame(await api('/api/resume', { file: s.file })); }
+        catch (e) { row.classList.remove('busy'); row.querySelector('.session-players').textContent = `续局失败: ${e.message}`; }
+      });
+      box.appendChild(row);
+    }
+  } catch (e) {
+    box.appendChild(el('div', 'session-empty', `加载失败: ${e.message}`));
+  }
+}
+
+// 刷新自动续局: URL #会话文件名 -> 按原配置重建
+const hashFile = decodeURIComponent(location.hash.slice(1)).trim();
+if (hashFile) {
+  api('/api/resume', { file: hashFile }).then(startGame).catch(() => { /* 文件不存在则留在设置页 */ });
+}
 
 function llmSpec(sel, modelInput) {
   const v = $(sel).value;
@@ -261,9 +331,8 @@ $('#btn-start-agents').addEventListener('click', async () => {
   startGame(payload);
 });
 
-$('#btn-new').addEventListener('click', () => location.reload());
-
-let modalWasShown = false;
+$('#btn-new').addEventListener('click', () => { location.hash = ''; location.reload(); });
+$('#logo').addEventListener('click', () => { location.hash = ''; location.reload(); }); // 回主页(丢掉 hash, 不自动续局)
 
 /** 等 bot 走完期间轮询 /api/state, 实时刷新 LLM 思考流 */
 async function awaitBot(request) {
@@ -285,6 +354,7 @@ async function awaitBot(request) {
 
 function startGame(payload) {
   G = payload;
+  if (payload.file) location.hash = payload.file; // 刷新可自动续局
   ui = freshUi();
   $('#setup').classList.add('hidden');
   $('#game').classList.remove('hidden');
@@ -294,8 +364,7 @@ function startGame(payload) {
   if (payload.pending) {
     awaitBot(api(`/api/bot/${G.id}`, {})).then((r) => {
       Object.assign(G, r);
-      ui = freshUi();
-      render();
+      revealBotMove();
     });
   }
 }
@@ -305,97 +374,217 @@ function render() {
   renderBoard();
   renderPyramid();
   renderPlayers();
-  renderLog();
   renderBanner();
   renderActionbar();
   renderModals();
 }
 
-/** 回合开始弹窗: ①特权 ②补货 (顺序固定, 先补货时可从特权弹窗切换) */
+/** 弹窗体系: ①特权/补货 (侧栏按钮手动打开) ②卡片放大详情(含黄金选取) ③附加选择 ④bot 操作回顾 */
 function renderModals() {
   const root = $('#modal-root'), box = $('#modal-box');
-  const show = myTurn() && (ui.phase === 'priv' || ui.phase === 'replenish');
-  root.classList.toggle('hidden', !show);
-  if (show && !modalWasShown) { // 每次重新打开默认归位左上角, 不挡棋盘
-    box.style.position = 'fixed';
-    box.style.left = '16px';
-    box.style.top = '16px';
-    box.style.width = '';
-  }
-  modalWasShown = show;
-  if (!show) return;
+  let show = false;
   box.replaceChildren();
+  if (myTurn() && (ui.phase === 'priv' || ui.phase === 'replenish')) {
+    renderPhaseModal(box);
+    show = true;
+  } else if (myTurn() && ui.pick && ui.pick.t !== 'take') {
+    renderCardDialog(box);
+    show = true;
+  } else if (myTurn() && ui.action && ui.extrasOpen) {
+    renderExtrasModal(box);
+    show = true;
+  } else if (myTurn() && ui.showBotMove && (G.recentMoves?.length ?? 0) > 0) {
+    renderBotMoveModal(box);
+    show = true;
+  }
+  root.classList.toggle('hidden', !show);
+}
+
+function modalHead(box, title) {
+  const head = el('div', 'modal-head');
+  head.append(el('h3', '', title));
+  const x = el('button', 'modal-x', '✕');
+  x.title = '关闭 (Esc)';
+  x.addEventListener('click', closeModal);
+  head.append(x);
+  box.append(head);
+}
+
+function closeModal() {
+  if (ui.phase === 'priv') { ui.privileges = []; ui.phase = 'main'; }
+  else if (ui.phase === 'replenish') ui.phase = 'main';
+  else if (ui.showBotMove) ui.showBotMove = false;
+  else if (ui.pick) { ui.pick = null; ui.hint = ''; }
+  else if (ui.action) { ui.action = null; ui.extras = {}; ui.takeSamePick = null; ui.extrasOpen = false; }
+  render();
+}
+
+/** 特权 / 补货弹窗 (确认后即时执行) */
+function renderPhaseModal(box) {
   const me = G.view.players[G.seat];
-  const canRep = canReplenishNow();
-  const privAvail = me.privileges > 0 && G.legal.privilegeCells.length > 0;
-  const nextOf = (ph) => {
-    if (ph === 'priv') return canRep && !ui.optDone.rep && !ui.asked.rep ? 'replenish' : 'main';
-    return privAvail && !ui.optDone.priv && !ui.asked.priv ? 'priv' : 'main';
-  };
-  // 即时执行可选行动: 确认后立刻向服务端应用, 棋盘/面板实时更新
-  const execOption = async (opts) => {
-    try {
-      const res = await api(`/api/option/${G.id}`, { seat: G.seat, ...opts });
-      Object.assign(G, res);
-      return true;
-    } catch (err) {
-      ui.hint = err.message;
-      return false;
-    }
-  };
+  const row = el('div', 'modal-actions');
   if (ui.phase === 'priv') {
-    modalHead(box, '💎 使用特权?');
-    box.append(el('div', 'hint', `持有 ${me.privileges} 枚 · 每枚可从棋盘拿 1 个非金 token · 已选 ${ui.privileges.length}/${me.privileges} · 点下方棋盘选取`));
-    const gridB = el('div', 'modal-board');
+    modalHead(box, '💎 使用特权');
+    box.append(el('div', 'hint', `持有 ${me.privileges} 枚 · 每枚从棋盘拿 1 个非金 token · 已选 ${ui.privileges.length}/${me.privileges}`));
+    const grid = el('div', 'modal-board');
     G.view.board.forEach((t, i) => {
-      const sel = G.legal.privilegeCells.includes(i);
-      const c = el('div', `mcell${t == null ? ' empty' : ''}${sel ? ' clickable' : ' dead'}${ui.privileges.includes(i) ? ' picked' : ''}`);
+      const ok = G.legal.privilegeCells.includes(i);
+      const c = el('div', `mcell${t == null ? ' empty' : ''}${ok ? ' clickable' : ' dead'}${ui.privileges.includes(i) ? ' picked' : ''}`);
       if (t != null) c.append(gemEl(t));
       else c.textContent = '·';
-      if (sel) c.addEventListener('click', () => pickCell(i));
-      gridB.append(c);
+      if (ok) c.addEventListener('click', () => pickCell(i));
+      grid.append(c);
     });
-    box.append(gridB);
-    const row = el('div', 'modal-actions');
-    const ok = el('button', 'primary', ui.privileges.length ? '确认拿取 ✓' : '不用特权 ▸');
-    ok.addEventListener('click', async () => {
-      if (ui.privileges.length) {
-        const cells = [...ui.privileges];
-        if (!(await execOption({ privileges: cells }))) return; // 服务端已应用, 失败则留在本弹窗
-        ui.privileges = [];
-        ui.optDone.priv = true; // 已真实执行, 不可反悔
-      }
-      ui.asked.priv = true; // 跳过仅是本地决定, 随时可反悔重开
-      ui.phase = nextOf('priv');
+    box.append(grid);
+    const okBtn = el('button', 'primary', ui.privileges.length ? `确认拿取 ${ui.privileges.length} 枚 ✓` : '先点选格子');
+    okBtn.disabled = !ui.privileges.length;
+    okBtn.addEventListener('click', async () => {
+      try {
+        Object.assign(G, await api(`/api/option/${G.id}`, { seat: G.seat, privileges: [...ui.privileges] }));
+      } catch (err) { ui.hint = err.message; }
+      ui.privileges = [];
+      ui.phase = 'main';
       render();
     });
-    const swap = el('button', 'ghost', '先补货 ▸');
-    swap.addEventListener('click', () => { ui.phase = 'replenish'; render(); });
-    swap.hidden = !canRep || ui.optDone.rep;
-    row.append(ok, swap);
-    box.append(row);
+    row.append(okBtn);
   } else {
     const empties = G.view.board.filter((t) => t == null).length;
-    modalHead(box, '🔄 主动补货?');
+    modalHead(box, '🔄 主动补货');
     box.append(el('div', 'hint', `棋盘 ${empties} 个空格 · 从袋中随机回填 · 对手获得 1 特权`));
-    const row = el('div', 'modal-actions');
-    const yes = el('button', 'primary', '补货 (对手得1特权)');
+    const yes = el('button', 'primary', '补货 (对手得 1 特权)');
     yes.addEventListener('click', async () => {
-      if (!(await execOption({ replenish: true }))) return;
-      ui.optDone.rep = true; // 已真实执行, 不可反悔
-      ui.asked.rep = true;
-      ui.phase = nextOf('replenish');
+      try {
+        Object.assign(G, await api(`/api/option/${G.id}`, { seat: G.seat, replenish: true }));
+      } catch (err) { ui.hint = err.message; }
+      ui.phase = 'main';
       render();
     });
-    const no = el('button', '', '跳过 ▸');
-    no.addEventListener('click', () => { ui.asked.rep = true; ui.phase = nextOf('replenish'); render(); }); // 跳过可反悔
-    const swap = el('button', 'ghost', '先特权 ▸');
-    swap.addEventListener('click', () => { ui.phase = 'priv'; render(); });
-    swap.hidden = !privAvail || ui.optDone.priv;
-    row.append(yes, no, swap);
-    box.append(row);
+    row.append(yes);
   }
-  makeModalDraggable(box);
+  const no = el('button', 'ghost', '取消');
+  no.addEventListener('click', closeModal);
+  row.append(no);
+  box.append(row);
+}
+
+/** 卡片放大详情: 左侧大图, 右侧操作按钮 */
+function renderCardDialog(box) {
+  const me = G.view.players[G.seat];
+  const wrap = el('div', 'card-dialog');
+  const imgBox = el('div', 'cd-img');
+  let def = null;
+  let from = null;
+  if (ui.pick.t === 'card') {
+    def = G.view.pyramid[ui.pick.slot];
+    from = { kind: 'pyramid', slot: ui.pick.slot };
+  } else if (ui.pick.t === 'deck') {
+    from = { kind: 'deck', level: ui.pick.level };
+  } else {
+    def = me.reserved[ui.pick.index];
+    from = { kind: 'reserved', index: ui.pick.index };
+  }
+  if (def) {
+    const img = el('img');
+    img.src = `/cards/${def.id}.png`;
+    img.alt = cardTitle(def);
+    imgBox.append(img);
+  } else {
+    const back = el('div', 'cd-back');
+    back.append(span('q', '?'));
+    imgBox.append(back);
+  }
+  wrap.append(imgBox);
+
+  const side = el('div', 'cd-side');
+  if (ui.pick.t === 'deck') {
+    side.append(el('h4', '', `盲留 ${'一二三'[ui.pick.level - 1]}级牌库顶`));
+    side.append(el('div', 'cd-meta', `牌库剩 ${G.view.decks[ui.pick.level - 1].length} 张 · 卡面保密 · 预留后随时可购买`));
+  } else {
+    const label = ui.pick.t === 'card' ? `金字塔 #${ui.pick.slot + 1}` : '我的预留卡';
+    side.append(el('h4', '', label));
+    side.append(el('div', 'cd-meta', cardTitle(def)));
+  }
+
+  if (ui.pick.want === 'reserve') {
+    // 多枚黄金: 弹窗内嵌棋盘直接选, 不用再点后面的大棋盘
+    side.append(el('div', 'hint', `场上有 ${goldCells().length} 枚黄金, 点击要拿的那枚:`));
+    const picker = el('div', 'modal-board cd-board');
+    G.view.board.forEach((t, i) => {
+      const isGold = t === 'gold';
+      const c = el('div', `mcell${t == null ? ' empty' : ''}${isGold ? ' clickable' : ' dead'}`);
+      if (t != null) c.append(gemEl(t));
+      else c.textContent = '·';
+      if (isGold) c.addEventListener('click', () => pickDialogGold(i));
+      picker.append(c);
+    });
+    side.append(picker);
+    const cancel = el('button', 'ghost', '取消');
+    cancel.addEventListener('click', closeModal);
+    side.append(cancel);
+    wrap.append(side);
+    box.append(wrap);
+    return;
+  }
+
+  const row = el('div', 'cd-actions');
+  if (ui.pick.t !== 'deck') {
+    const buyMatch = matchAction({ kind: 'buy', from });
+    const buy = el('button', 'primary big', '买卡');
+    buy.disabled = !buyMatch;
+    buy.title = buyMatch ? '' : 'token/折扣不足 · 可先用特权拿 token 再来';
+    buy.addEventListener('click', () => {
+      ui.action = buyMatch;
+      const cc = actionCard();
+      if (takeSameNeeded() && cc) ui.takeSamePick = null; // 强制在弹窗内选格, 不预选
+      ui.pick = null;
+      ui.hint = '';
+      afterActionChosen();
+    });
+    row.append(buy);
+  }
+  if (ui.pick.t !== 'buyRes') {
+    const canRes = me.reserved.length < 3 && goldCells().length > 0;
+    const res = el('button', 'big', '预留 + 拿黄金');
+    res.disabled = !canRes;
+    res.title = canRes ? '' : '场上无黄金或预留已满 (最多 3 张)';
+    res.addEventListener('click', () => {
+      ui.action = null;
+      ui.pick.want = 'reserve';
+      const golds = goldCells();
+      if (golds.length === 1) {
+        ui.pick.goldCell = golds[0];
+        tryMatchReserve();
+        if (ui.action) { ui.pick = null; afterActionChosen(); return; }
+      }
+      render(); // 弹窗内切换为黄金选取
+    });
+    row.append(res);
+  }
+  const cancel = el('button', 'ghost', '取消');
+  cancel.addEventListener('click', closeModal);
+  row.append(cancel);
+  side.append(row);
+  wrap.append(side);
+  box.append(wrap);
+}
+
+/** 弹窗内选黄金: 选定即提交 */
+function pickDialogGold(i) {
+  if (!myTurn() || ui.pick?.want !== 'reserve') return;
+  ui.pick.goldCell = i;
+  tryMatchReserve();
+  if (ui.action) { ui.pick = null; afterActionChosen(); return; }
+  render();
+}
+
+/** 主行动已定: 还有待选项则弹选择框等确认, 否则直接提交 */
+function afterActionChosen() {
+  if (extrasPending().length > 0) {
+    ui.extrasOpen = true;
+    render();
+  } else {
+    submitMove();
+  }
 }
 
 function canPickCell(i) {
@@ -412,7 +601,10 @@ function canPickCell(i) {
 function renderBoard() {
   const b = $('#board');
   b.replaceChildren();
+  b.append(el('div', 'coord'));
+  for (const ch of 'ABCDE') b.append(el('div', 'coord', ch));
   G.view.board.forEach((t, i) => {
+    if (i % 5 === 0) b.append(el('div', 'coord', String(Math.floor(i / 5) + 1)));
     const d = el('div', `cell${t == null ? ' empty' : ''}`);
     if (t == null) {
       d.textContent = '·';
@@ -480,6 +672,14 @@ function renderPyramid() {
     tok.title = `补货时可回填 ${TZH[c]}`;
     bag.append(tok);
   }
+  // 主动补货按钮就在袋况旁
+  if (myTurn() && canReplenishNow()) {
+    const b = el('button', 'opt-chip');
+    b.append(span('', '🔄 主动补货'));
+    b.title = '随机回填空格 · 对手得 1 特权';
+    b.addEventListener('click', () => { ui.phase = 'replenish'; render(); });
+    bag.append(b);
+  }
 }
 
 function renderPlayers() {
@@ -493,13 +693,21 @@ function renderPlayers() {
     if (G.view.current === s && !G.over) card.classList.add('active');
 
     const head = el('div', 'p-head');
-    head.append(span('name', `${p.name}${mine ? ' (我)' : ''}`));
+    head.append(span('name', `${p.name}`));
     const stats = el('div', 'p-stats');
     stats.append(el('span', '', '积分'), span('pts', String(p.points)));
     stats.append(el('span', '', '皇冠'), span('cr', `♛${p.crowns}`));
     stats.append(el('span', '', `特权×${p.privileges}`));
     if (p.royals.length) stats.append(el('span', '', `皇家×${p.royals.length}`));
     head.append(stats);
+    // 使用特权按钮就在特权数量旁 (右侧玩家栏)
+    if (mine && myTurn() && p.privileges > 0 && G.legal.privilegeCells.length > 0) {
+      const b = el('button', 'opt-chip');
+      b.append(span('', `💎 使用特权`));
+      b.title = '每枚特权可从棋盘拿 1 个非金 token';
+      b.addEventListener('click', () => { ui.privileges = []; ui.phase = 'priv'; render(); });
+      head.append(b);
+    }
     card.append(head);
 
     const tokens = el('div', 'tokens');
@@ -575,13 +783,6 @@ function renderPlayers() {
   }
 }
 
-function renderLog() {
-  const lg = $('#log');
-  lg.replaceChildren();
-  for (const line of G.view.log.slice(-40)) lg.append(el('div', '', line));
-  lg.scrollTop = lg.scrollHeight;
-}
-
 function renderBanner() {
   const b = $('#banner');
   if (G.over) {
@@ -654,7 +855,6 @@ function defaultDiscard(excess) {
 function renderActionbar() {
   const turn = myTurn();
   $('#human-turn').classList.toggle('hidden', !turn);
-  $('#thinking').classList.toggle('hidden', !(G.mode === 'human' && !turn && !G.over));
   // LLM bot 原始输出: 有则显示 toggle (思考中/回合中均可展开)
   const bm = $('#bot-msg');
   bm.classList.toggle('hidden', !G.botMessage);
@@ -672,147 +872,214 @@ function renderActionbar() {
   }
   if (!turn) return;
 
-  const me = G.view.players[G.seat];
-
-  // ---- 当前选择区 ----
   const pick = $('#pick-bar');
   pick.replaceChildren();
-  ui.hint = ui.hint ?? '';
-  // 特权/补货: 随时重开 modal (未用时可反悔跳过; 已即时执行过的不再展示)
-  const privAvail2 = !ui.optDone.priv && me.privileges > 0 && G.legal.privilegeCells.length > 0;
-  if (privAvail2) {
-    const chip = el('button', 'tok bonus');
-    chip.append(span('n', '💎 使用特权'));
-    chip.title = '打开特权选择弹窗';
-    chip.addEventListener('click', () => { ui.phase = 'priv'; render(); });
-    pick.append(chip);
-  }
-  if (canReplenishNow() && !ui.optDone.rep) {
-    const chip = el('button', 'tok bonus');
-    chip.append(span('n', '🔄 主动补货'));
-    chip.title = '随机回填空格 · 对手得1特权';
-    chip.addEventListener('click', () => { ui.phase = 'replenish'; render(); });
-    pick.append(chip);
-  }
-  if (!ui.pick) {
-    pick.append(el('span', 'hint', '💡 点击棋盘格拿 token (横竖斜直线) · 点击卡片买卡 / 预留 · 点牌库盲留'));
-  } else if (ui.pick.t === 'take') {
-    pick.append(el('b', '', `拿取 ${ui.pick.cells.length}/3:`));
+
+  // 当前选择进度
+  if (ui.pick?.t === 'take') {
+    pick.append(el('b', '', `拿 ${ui.pick.cells.length} 枚:`));
     for (const i of ui.pick.cells) {
       const tok = el('span', 'tok');
       tok.append(gemEl(G.view.board[i]), span('n', cellName(i)));
       pick.append(tok);
     }
-    if (!ui.action) pick.append(el('span', 'error-inline', '当前组合不可行'));
-    else pick.append(el('span', 'hint', '可继续加点 / 直接提交'));
-  } else if (ui.pick.t === 'card') {
-    const c = G.view.pyramid[ui.pick.slot];
-    pick.append(el('b', '', '目标卡:'));
-    pick.append(miniCard(c, null, true, { selected: true }));
-    const buyFrom = { kind: 'pyramid', slot: ui.pick.slot };
-    const buyMatch = matchAction({ kind: 'buy', from: buyFrom });
-    // 特权拿的 token 可以同回合支付, 故选了特权时放行 (服务端权威校验)
-    const buyOk = !!buyMatch || ui.privileges.length > 0;
-    const canRes = me.reserved.length < 3 && goldCells().length > 0;
-    const buyBtn = el('button', `primary${ui.action?.action.kind === 'buy' ? ' sel' : ''}`, '买卡');
-    buyBtn.disabled = !buyOk;
-    buyBtn.title = buyOk ? '' : 'token/折扣不足 (可先用特权拿 token)';
-    buyBtn.addEventListener('click', () => {
-      ui.action = buyMatch ?? { i: -1, action: { kind: 'buy', from: buyFrom } };
-      ui.pick.want = null; ui.pick.goldCell = null;
-      render();
-    });
-    const resBtn = el('button', '', '预留 + 拿黄金');
-    resBtn.disabled = !canRes;
-    resBtn.title = canRes ? '' : '场上无黄金或预留已满';
-    resBtn.addEventListener('click', () => {
-      ui.action = null;
-      const golds = goldCells();
-      if (golds.length === 1) { ui.pick.goldCell = golds[0]; tryMatchReserve(); }
-      else ui.pick.want = 'reserve';
-      render();
-    });
-    pick.append(buyBtn, resBtn);
-    if (ui.pick.want === 'reserve') pick.append(el('span', 'error-inline', '← 点击棋盘上的黄金 token'));
-  } else if (ui.pick.t === 'deck') {
-    pick.append(el('b', '', `盲留 ${['一', '二', '三'][ui.pick.level - 1]}级牌库顶:`));
-    if (ui.pick.want === 'reserve') pick.append(el('span', 'error-inline', '点击棋盘上的黄金 token'));
-    else if (ui.action) pick.append(el('span', 'hint', '就绪'));
-  } else if (ui.pick.t === 'buyRes') {
-    pick.append(el('b', '', '购买预留卡:'));
-    pick.append(miniCard(me.reserved[ui.pick.index], null, true, { selected: true }));
+    if (!ui.action) {
+      pick.append(el('span', 'error-inline', '组合不可行'));
+    } else {
+      // 匹配即可提交 (新增选满会自动提交, 此处覆盖取消选择后的停留状态)
+      const go = el('button', 'primary', `拿 ${ui.pick.cells.length} 枚 ✓`);
+      go.title = 'Enter 也可提交 · 点已选格可取消';
+      go.addEventListener('click', () => afterActionChosen());
+      if (takeExtendable()) pick.append(go, el('span', 'hint', '可继续加点 / 点已选取消'));
+      else pick.append(go);
+    }
+  } else if (ui.pick?.want === 'reserve') {
+    pick.append(el('span', 'error-inline', '← 点击棋盘上要拿的黄金 token'));
+  } else if (ui.action) {
+    pick.append(el('span', 'ok-inline', '✓ 提交中…'));
+  } else {
+    pick.append(el('span', 'hint', '💡 点棋盘格拿 token (直线相邻, 选满自动提交) · 点卡片买/留 · 点牌库盲留'));
   }
   if (ui.hint) { pick.append(el('span', 'error-inline', ui.hint)); ui.hint = ''; }
-  const cancel = el('button', 'ghost', '取消');
-  cancel.addEventListener('click', () => {
+
+  const clear = el('button', 'ghost', '清除');
+  clear.hidden = !(ui.pick || ui.action);
+  clear.addEventListener('click', () => {
     ui.pick = null; ui.action = null; ui.extras = {}; ui.takeSamePick = null;
     render();
   });
-  if (ui.pick) pick.append(cancel);
+  pick.append(clear);
+}
 
-  // ---- 附加选择 ----
+/** 待补充的选择 (阻塞提交, 由弹窗收集) */
+function extrasPending() {
+  if (!ui.action) return [];
+  const need = [];
+  if (associateNeeded() && !ui.extras.associateColor) need.push('associate');
+  if ((stealNeeded() || royalStealNeeded()) && !ui.extras.stealPick) need.push('steal');
+  if (royalNeeded() && !Number.isInteger(ui.extras.royalPick)) need.push('royal');
+  if (takeSameNeeded() && ui.takeSamePick == null) need.push('takeSame');
   const excess = discardExcess();
-  const ex = $('#extras');
-  ex.replaceChildren();
-  if (ui.action) {
-    const c = actionCard();
-    if (c && ui.action.action.kind === 'buy') {
-      const row = el('div', 'row');
-      row.append(el('b', '', '购买:'));
-      row.append(miniCard(c, null, true, { selected: true }));
-      ex.append(row);
-    }
-    if (associateNeeded()) {
-      const colors = [...new Set(me.cards.map((x) => x.color).filter(Boolean))];
-      ex.append(exRow('百搭卡叠放颜色:', colors.map((g) => colorBtn(g, () => { ui.extras.associateColor = g; }, ui.extras.associateColor === g))));
-    }
-    if (stealNeeded()) {
-      const opp = G.view.players[1 - G.seat];
-      const opts = PEARL_COLORS.filter((t) => opp.tokens[t] > 0);
-      ex.append(exRow('偷取对手 token:', opts.map((t) => colorBtn(t, () => { ui.extras.stealPick = t; }, ui.extras.stealPick === t))));
-    }
-    if (royalStealNeeded()) {
-      const opp = G.view.players[1 - G.seat];
-      const opts = PEARL_COLORS.filter((t) => opp.tokens[t] > 0);
-      ex.append(exRow('皇家卡偷取对手 token:', opts.map((t) => colorBtn(t, () => { ui.extras.stealPick = t; }, ui.extras.stealPick === t))));
-    }
-    if (takeSameNeeded() && c) {
-      const cells = G.view.board.map((t, i) => (t === c.color ? i : -1)).filter((i) => i >= 0);
-      ex.append(exRow(`「拿同色」选择${GEMZH[c.color]} token 格 (或点棋盘):`, cells.map((i) => cellBtn(i, () => { ui.takeSamePick = i; }, ui.takeSamePick === i))));
-    }
-    if (royalNeeded()) {
-      ex.append(exRow('皇冠里程碑 → 选皇家卡:', G.view.royals.map((r, i) => royalBtn(r, ui.extras.royalPick === i, () => { ui.extras.royalPick = i; }))));
-    }
-    if (excess > 0) {
-      if (ui.discardExcess !== excess) {
-        ui.extras.discard = defaultDiscard(excess);
-        ui.discardExcess = excess;
-      }
-      const div = el('div', 'row');
-      div.append(el('b', '', `token 将超 10, 弃置 ${excess} 枚:`));
-      ALL_COLORS.filter((t) => me.tokens[t] > 0).forEach((t) => {
-        const inp = document.createElement('input');
-        inp.type = 'number'; inp.min = '0'; inp.max = String(me.tokens[t]);
-        inp.value = ui.extras.discard[t] ?? 0;
-        inp.addEventListener('input', () => {
-          ui.extras.discard[t] = Number(inp.value || 0);
-        });
-        const tok = el('span', 'tok');
-        tok.append(gemEl(t), inp);
-        div.append(tok);
-      });
-      const dsum = Object.values(ui.extras.discard).reduce((s, n) => s + n, 0);
-      if (dsum !== excess) div.append(el('span', 'error-inline', dsum < excess ? `还需弃 ${excess - dsum} 枚` : '弃多了'));
-      ex.append(div);
-    }
-  }
+  if (excess > 0 && Object.values(ui.extras.discard ?? {}).reduce((s, n) => s + n, 0) !== excess) need.push('discard');
+  return need;
+}
 
-  const ready = !!ui.action
-    && (!associateNeeded() || ui.extras.associateColor)
-    && (!royalNeeded() || Number.isInteger(ui.extras.royalPick))
-    && ((!stealNeeded() && !royalStealNeeded()) || !!ui.extras.stealPick)
-    && (excess <= 0 || Object.values(ui.extras.discard ?? {}).reduce((s, n) => s + n, 0) === excess);
-  $('#btn-submit').disabled = !ready;
+/** 附加选择弹窗: 买卡触发的叠色/偷取/皇家卡/拿同色/弃置 */
+function renderExtrasModal(box) {
+  const me = G.view.players[G.seat];
+  const c = actionCard();
+  modalHead(box, '补充选择');
+  const body = el('div', 'extras-modal');
+  if (c && ui.action.action.kind === 'buy') {
+    body.append(exRow('购买:', [miniCard(c, null, true, { selected: true })]));
+  }
+  if (associateNeeded()) {
+    const colors = [...new Set(me.cards.map((x) => x.color).filter(Boolean))];
+    body.append(exRow('百搭卡叠放颜色:', colors.map((g) => colorBtn(g, () => { ui.extras.associateColor = g; }, ui.extras.associateColor === g))));
+  }
+  if (stealNeeded()) {
+    const opp = G.view.players[1 - G.seat];
+    const opts = PEARL_COLORS.filter((t) => opp.tokens[t] > 0);
+    body.append(exRow('「偷取」选对手 token:', opts.map((t) => colorBtn(t, () => { ui.extras.stealPick = t; }, ui.extras.stealPick === t))));
+  }
+  if (royalStealNeeded()) {
+    const opp = G.view.players[1 - G.seat];
+    const opts = PEARL_COLORS.filter((t) => opp.tokens[t] > 0);
+    body.append(exRow('皇家卡「偷取」选对手 token:', opts.map((t) => colorBtn(t, () => { ui.extras.stealPick = t; }, ui.extras.stealPick === t))));
+  }
+  if (takeSameNeeded() && c) {
+    // 内嵌棋盘选同色格, 选完才能提交
+    const cells = G.view.board.map((t, i) => (t === c.color ? i : -1)).filter((i) => i >= 0);
+    const grid = el('div', 'modal-board bm-board');
+    G.view.board.forEach((t, i) => {
+      const ok = cells.includes(i);
+      const cell = el('div', `mcell${t == null ? ' empty' : ''}${ok ? ' clickable' : ' dead'}${ui.takeSamePick === i ? ' picked' : ''}`);
+      if (t != null) cell.append(gemEl(t));
+      else cell.textContent = '·';
+      if (ok) cell.addEventListener('click', () => { ui.takeSamePick = i; render(); });
+      grid.append(cell);
+    });
+    body.append(exRow(`「拿同色」选${GEMZH[c.color]} token 格:`, [grid]));
+  }
+  if (royalNeeded()) {
+    body.append(exRow('皇冠里程碑 → 选皇家卡:', G.view.royals.map((r, i) => royalBtn(r, ui.extras.royalPick === i, () => { ui.extras.royalPick = i; }))));
+  }
+  const excess = discardExcess();
+  if (excess > 0) {
+    if (ui.discardExcess !== excess) {
+      ui.extras.discard = defaultDiscard(excess);
+      ui.discardExcess = excess;
+    }
+    const div = el('div', 'row');
+    div.append(el('b', '', `token 将超 10, 弃置 ${excess} 枚:`));
+    ALL_COLORS.filter((t) => me.tokens[t] > 0).forEach((t) => {
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.min = '0'; inp.max = String(me.tokens[t]);
+      inp.value = ui.extras.discard[t] ?? 0;
+      inp.addEventListener('input', () => {
+        ui.extras.discard[t] = Number(inp.value || 0);
+        refreshExtrasConfirm(excess); // 不整页重渲染, 保住输入焦点
+      });
+      const tok = el('span', 'tok');
+      tok.append(gemEl(t), inp);
+      div.append(tok);
+    });
+    div.append(el('span', 'error-inline discard-hint', ''));
+    body.append(div);
+    refreshExtrasConfirm(excess);
+  }
+  box.append(body);
+
+  const pending = extrasPending();
+  const row = el('div', 'modal-actions');
+  const ok = el('button', 'primary big', pending.length > 0 ? `还差 ${pending.length} 项…` : '确认提交 ✓');
+  ok.disabled = pending.length > 0; // 有未完成的额外选择时禁止提交
+  ok.addEventListener('click', () => submitMove());
+  const back = el('button', 'ghost', '取消行动');
+  back.addEventListener('click', () => { ui.action = null; ui.extras = {}; ui.takeSamePick = null; ui.extrasOpen = false; render(); });
+  row.append(ok, back);
+  box.append(row);
+}
+
+/** 弃置输入变化时即时刷新确认按钮/提示 */
+function refreshExtrasConfirm(excess) {
+  const dsum = Object.values(ui.extras.discard ?? {}).reduce((s, n) => s + n, 0);
+  const hint = document.querySelector('.discard-hint');
+  if (hint) hint.textContent = dsum === excess ? '' : dsum < excess ? `还需弃 ${excess - dsum} 枚` : '弃多了';
+  const pending = extrasPending();
+  const ok = [...document.querySelectorAll('.modal-actions button.primary')].find((b) => b.textContent.includes('确认提交') || b.textContent.includes('还差'));
+  if (ok) {
+    ok.disabled = pending.length > 0;
+    ok.textContent = pending.length > 0 ? `还差 ${pending.length} 项…` : '确认提交 ✓';
+  }
+}
+
+/** bot 操作回顾: 图示对手最近一轮做了什么 */
+function renderBotMoveModal(box) {
+  modalHead(box, `🤖 ${G.names[1 - G.seat]} 的操作`);
+  const list = el('div', 'bot-move-list');
+  for (const v of G.recentMoves ?? []) list.append(botMoveRow(v));
+  box.append(list);
+  const row = el('div', 'modal-actions');
+  const ok = el('button', 'primary big', '知道了 ▸');
+  ok.addEventListener('click', () => { ui.showBotMove = false; render(); });
+  row.append(ok);
+  box.append(row);
+}
+
+function gemsRow(gems) {
+  const row = el('span', 'bm-gems');
+  for (const g of gems ?? []) if (g) row.append(gemEl(g));
+  return row;
+}
+
+function botMoveRow(v) {
+  const r = el('div', 'bot-move');
+  const a = v.action;
+  if (a.kind === 'take') {
+    r.append(el('span', 'bm-lab', '拿取'), gemsRow(v.takeGems));
+    r.append(botTakeBoard(v)); // 高亮显示拿取位置
+  } else if (a.kind === 'reserve') {
+    r.append(el('span', 'bm-lab', '预留'));
+    r.append(v.card ? miniCard(v.card, null, true) : miniBack(), gemEl('gold'));
+  } else if (v.card) {
+    r.append(el('span', 'bm-lab', '购买'), miniCard(v.card, null, true));
+  }
+  if (v.refill) r.append(el('span', 'bm-extra', '补位 →'), miniCard(v.refill, null, true));
+  if (v.privGems?.length) r.append(el('span', 'bm-lab', '特权'), gemsRow(v.privGems));
+  if (v.replenished) r.append(el('span', 'bm-extra', '🔄 补货'));
+  if (v.stealGem) r.append(el('span', 'bm-extra', '偷取'), gemEl(v.stealGem));
+  if (v.takeSameGem) r.append(el('span', 'bm-extra', '拿同色'), gemEl(v.takeSameGem));
+  if (v.associateGem) r.append(el('span', 'bm-extra', '叠色'), gemEl(v.associateGem));
+  if (v.royal) r.append(el('span', 'bm-extra', '领皇家卡'), miniRoyal(v.royal));
+  if (v.deltas) r.append(deltasRow(v.deltas));
+  return r;
+}
+
+/** 迷你棋盘: 高亮 bot 拿取的位置 (颜色用快照, 不依赖已变化的棋盘) */
+function botTakeBoard(v) {
+  const grid = el('div', 'modal-board bm-board');
+  const taken = new Map(v.action.cells.map((c, k) => [c, v.takeGems?.[k] ?? null]));
+  G.view.board.forEach((t, i) => {
+    const hit = taken.has(i);
+    const cell = el('div', `mcell${t == null && !hit ? ' empty' : ''}${hit ? ' taken' : ' dead'}`);
+    if (hit) cell.append(gemEl(taken.get(i)));
+    else if (t != null) cell.append(gemEl(t));
+    else cell.textContent = '·';
+    cell.title = hit ? `拿了 ${cellName(i)}` : cellName(i);
+    grid.append(cell);
+  });
+  return grid;
+}
+
+const DELTA_LABEL = { points: '分', crowns: '皇冠', privileges: '特权', tokens: 'token', cards: '卡' };
+function deltasRow(d) {
+  const row = el('span', 'bm-deltas');
+  for (const [k, lab] of Object.entries(DELTA_LABEL)) {
+    const n = d[k];
+    if (n) row.append(el('span', `bm-delta ${n > 0 ? 'up' : 'down'}`, `${n > 0 ? '+' : ''}${n} ${lab}`));
+  }
+  return row;
 }
 
 function exRow(label, btns) {
@@ -827,20 +1094,14 @@ function colorBtn(code, onPick, picked) {
   b.addEventListener('click', () => { onPick(); render(); });
   return b;
 }
-function cellBtn(i, onPick, picked) {
-  const b = el('button', `tc-btn${picked ? ' picked' : ''}`);
-  b.append(gemEl(G.view.board[i]), span('', cellName(i)));
-  b.addEventListener('click', () => { onPick(); render(); });
-  return b;
-}
 
 let botMsgOpen = false;
 $('#bot-msg-toggle').addEventListener('click', () => { botMsgOpen = !botMsgOpen; render(); });
 
-$('#btn-submit').addEventListener('click', async () => {
+/** 提交走法: 附加字段已在新弹窗中选好 */
+async function submitMove() {
   if (!ui.action) return;
   const move = { action: ui.action.action };
-  if (ui.privileges.length) move.privileges = ui.privileges; // 弹窗内临时选择走 applyMove; 已即时执行过则此处为空
   if (associateNeeded() && ui.extras.associateColor) move.associateColor = ui.extras.associateColor;
   if ((stealNeeded() || royalStealNeeded()) && ui.extras.stealPick) move.stealPick = ui.extras.stealPick;
   if (takeSameNeeded() && ui.takeSamePick != null) move.takeSameCell = ui.takeSamePick;
@@ -860,80 +1121,29 @@ $('#btn-submit').addEventListener('click', async () => {
     if (res.pending) {
       const r2 = await awaitBot(api(`/api/bot/${G.id}`, {}));
       Object.assign(G, r2);
-      ui = freshUi();
-      render();
+      revealBotMove();
     }
   } catch (err) {
     $('#move-error').textContent = err.message;
     render();
   }
+}
+// Enter 提交 (输入框内除外): 拿 token / 附加选择弹窗确认共用
+addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if (!myTurn() || !ui.action || extrasPending().length > 0) return;
+  e.preventDefault();
+  submitMove();
 });
 
-/** 拖动 modal (按住标题栏或 ✥ 按钮) */
-function modalHead(box, title) {
-  const head = el('div', 'modal-head');
-  head.append(el('h3', '', title));
-  const drag = el('button', 'drag-btn', '✥ 拖动');
-  drag.title = '按住拖动弹窗';
-  head.append(drag);
-  box.append(head);
-}
-function makeModalDraggable(box) {
-  const start = (e) => {
-    e.preventDefault();
-    const r = box.getBoundingClientRect();
-    box.style.position = 'fixed';
-    box.style.width = `${r.width}px`;
-    box.style.left = `${r.x}px`;
-    box.style.top = `${r.y}px`;
-    const dx = e.clientX - r.x, dy = e.clientY - r.y;
-    const move = (ev) => {
-      box.style.left = `${Math.max(0, Math.min(innerWidth - r.width, ev.clientX - dx))}px`;
-      box.style.top = `${Math.max(0, Math.min(innerHeight - 48, ev.clientY - dy))}px`;
-    };
-    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); };
-    addEventListener('pointermove', move);
-    addEventListener('pointerup', up);
-  };
-  for (const h of box.querySelectorAll('.drag-btn, h3')) h.addEventListener('pointerdown', start);
-}
-
-// ---------------- 文字指挥 (LLM 解析自然语言 → 走法) ----------------
-async function submitSay() {
-  const text = $('#say-input').value.trim();
-  if (!text || !myTurn()) return;
-  const btn = $('#btn-say');
-  btn.disabled = true;
-  $('#say-status').textContent = '🤖 解析中…';
-  $('#say-status').className = 'hint';
-  try {
-    const res = await api(`/api/say/${G.id}`, { seat: G.seat, text });
-    if (!res.ok) { // 解析器向玩家澄清/说明, 局面不变
-      $('#say-status').textContent = `🤖 ${res.reply}`;
-      return;
-    }
-    Object.assign(G, res);
-    ui = freshUi();
-    $('#say-input').value = '';
-    $('#say-status').textContent = `✅ ${res.say ?? '已执行'}`;
-    render();
-    if (res.pending) {
-      $('#say-status').textContent = '';
-      const r2 = await awaitBot(api(`/api/bot/${G.id}`, {}));
-      Object.assign(G, r2);
-      ui = freshUi();
-      render();
-    }
-  } catch (err) {
-    $('#say-status').textContent = `⚠ ${err.message}`;
-    $('#say-status').className = 'error-inline';
-  } finally {
-    btn.disabled = false;
-  }
-}
-$('#btn-say').addEventListener('click', submitSay);
-$('#say-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') submitSay();
+// 弹窗关闭: 点遮罩 / Esc
+$('#modal-root').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeModal();
+});
+addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#modal-root').classList.contains('hidden')) closeModal();
 });
 
 // ---------------- Agent 对战控制 ----------------
