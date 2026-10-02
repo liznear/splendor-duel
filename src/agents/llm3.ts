@@ -131,6 +131,7 @@ export interface V3Memory {
   ledger: string[];
   targetIds: string[];
   memoForTurn?: string;
+  route?: { name: string; cardIds: string[]; sincePly: number };
 }
 export const createMemory = (): V3Memory => ({ lastPly: -1, snap: null, ledger: [], targetIds: [] });
 
@@ -356,6 +357,97 @@ function advance(view: GameState, seat: 0 | 1, mem: V3Memory): boolean {
   return true;
 }
 
+interface Slot { where: string; c: CardLike }
+const poolOf = (view: GameState, seat: 0 | 1, includeReserved: boolean): Slot[] => {
+  const opp = view.players[1 - seat]!;
+  return [
+    ...view.pyramid.map((c, i) => (c ? { where: `金字塔${i + 1}号`, c } : null)),
+    ...(includeReserved ? opp.reserved.map((c, i) => (c && c.id !== 'hidden' ? { where: `对手明留${i + 1}`, c } : null)) : []),
+  ].filter((x): x is Slot => x !== null);
+};
+
+/** 对手路线威胁: 三线进度+对手缺口推进卡+免费清单+⚡处置(治 bav1 败局: 蓝列9/10才反应) */
+export function routeThreatBlock(view: GameState, seat: 0 | 1): string[] {
+  const opp = view.players[1 - seat]!;
+  const pool = poolOf(view, seat, true);
+  const gains: { name: string; prog: number; need: number; gain: (c: CardLike) => number }[] = [
+    { name: '总分线', prog: opp.points, need: 20, gain: (c) => c.points },
+    { name: '皇冠线', prog: opp.crowns, need: 10, gain: (c) => c.crowns },
+  ];
+  const bestColor = (Object.values(GEMS) as Gem[]).map((g) => ({ g, pts: colorPointsOf(opp, g) })).sort((a, b) => b.pts - a.pts)[0]!;
+  if (bestColor.pts > 0) gains.push({
+    name: `单色线(${GEM_ZH[bestColor.g]})`, prog: bestColor.pts, need: 10,
+    gain: (c) => (c.color === bestColor.g || (c.isAssociate && opp.cards.some((x) => x.color === bestColor.g))) ? c.points : 0,
+  });
+  const out: string[] = [];
+  const crit: string[] = [];
+  for (const l of gains) {
+    const adv = pool.filter((x) => l.gain(x.c) > 0)
+      .map((x) => ({ ...x, short: shortfall(opp, x.c), gain: l.gain(x.c) }))
+      .sort((a, b) => a.short - b.short || b.gain - a.gain);
+    if (l.prog === 0 && adv.length === 0) continue;
+    const near = adv.filter((a) => a.short <= 2).slice(0, 3);
+    out.push(`- ${l.name} ${l.prog}/${l.need}` + (near.length
+      ? `: 对手推进卡 ${near.map((a) => `${a.where}(${cardShort(a.c)}${a.short === 0 ? ',免费!' : `,差${a.short}`})`).join(' ')}` : ': 暂无≤2回合推进卡'));
+    const completing = adv.filter((a) => l.prog + a.gain >= l.need);
+    if (completing.length) {
+      const fastest = Math.max(1, Math.min(...completing.map((a) => Math.ceil(a.short / (2 + opp.privileges)))));
+      out.push(`  ⚠${l.name}有整线卡: 对手最快≈${fastest}回合达成(估算)`);
+      if ((l.name.startsWith('单色') || l.name.startsWith('皇冠')) && l.prog >= 6 && completing.some((a) => a.short <= 2))
+        crit.push(`${l.name}${l.prog}/${l.need}有≤2回合整线卡`);
+    }
+    if ((l.name.startsWith('单色') || l.name.startsWith('皇冠')) && l.prog >= 6 && near.length >= 2)
+      crit.push(`${l.name}${l.prog}/${l.need}且对手推进卡≥2张`);
+  }
+  const freeBuys = pool.filter((x) => shortfall(opp, x.c) === 0).slice(0, 4);
+  if (freeBuys.length) out.push(`- 对手0成本可买: ${freeBuys.map((x) => `${x.where}${cardShort(x.c)}`).join(' ')}`);
+  if (crit.length) out.push(`⚡${[...new Set(crit)].join(' ; ')} → 处置三选一本回合执行: 拿走推进卡缺口色 / 买走或黄金预留推进卡 / 抢先完成自己的线`);
+  return out.length ? out : ['对手三线均无近推进卡(安静期)'];
+}
+
+/** 我方中期路线锚: 代码维护的 2-4 回合路线, 关键卡失守/他线反超才换(治目标每回合漂移) */
+export function routeBlock(view: GameState, seat: 0 | 1, mem: V3Memory): string[] {
+  const me = view.players[seat]!;
+  const pool: Slot[] = [
+    ...view.pyramid.map((c, i) => (c ? { where: `金字塔${i + 1}号`, c } : null)),
+    ...me.reserved.map((c, i) => ({ where: `我预留${i + 1}`, c })),
+  ].filter((x): x is Slot => x !== null);
+  type Line = { name: string; prog: number; need: number; gain: (c: CardLike) => number };
+  const lines: Line[] = [
+    { name: '总分线', prog: me.points, need: 20, gain: (c) => c.points },
+    { name: '皇冠线', prog: me.crowns, need: 10, gain: (c) => c.crowns },
+  ];
+  const myColor = (Object.values(GEMS) as Gem[]).map((g) => ({ g, pts: colorPointsOf(me, g) })).sort((a, b) => b.pts - a.pts)[0]!;
+  if (myColor.pts > 0) lines.push({
+    name: `单色线(${GEM_ZH[myColor.g]})`, prog: myColor.pts, need: 10,
+    gain: (c) => (c.color === myColor.g || (c.isAssociate && me.cards.some((x) => x.color === myColor.g))) ? c.points : 0,
+  });
+  const score = (l: Line) => l.prog / l.need + 0.15 * pool.filter((x) => l.gain(x.c) > 0 && shortfall(me, x.c) <= 5).length;
+  const keyCards = (l: Line) => pool.filter((x) => l.gain(x.c) > 0)
+    .map((x) => ({ ...x, short: shortfall(me, x.c), gain: l.gain(x.c) }))
+    .filter((x) => x.short <= 5).sort((a, b) => a.short - b.short || b.gain - a.gain).slice(0, 3);
+  const best = [...lines].sort((a, b) => score(b) - score(a))[0]!;
+  const prev = mem.route;
+  let line = best, changed = prev != null;
+  if (prev) {
+    const pl = lines.find((l) => l.name === prev.name);
+    const prevAlive = prev.cardIds.some((id) =>
+      pool.some((x) => x.c.id === id) || me.cards.some((c) => c.def.id === id));
+    if (pl && prevAlive && score(pl) >= score(best) - 0.1) { line = pl; changed = false; }
+  }
+  const cards = keyCards(line);
+  mem.route = { name: line.name, cardIds: cards.map((x) => x.c.id), sincePly: changed ? view.turnCount : (prev?.sincePly ?? view.turnCount) };
+  const head = changed
+    ? `⚠路线变更: ${prev!.name} → ${line.name}(关键卡失守或另一线反超; 若不认可需在思考中说明)`
+    : `(已维持${Math.max(0, view.turnCount - mem.route.sincePly)}手)`;
+  const out = [`${head} 当前锚定: ${line.name} ${line.prog}/${line.need}`];
+  out.push(cards.length
+    ? `- 关键卡: ${cards.map((x) => `${x.where}(${x.c.id} ${cardShort(x.c)}, 我差${x.short})`).join(' ')}`
+    : '- 暂无≤5缺口关键卡: 先买折扣/攒料, 出现即锚定');
+  out.push('- 失效条件: 关键卡被对手买走(【目标追踪】宣布) 或 对手该线更快(【对手路线威胁】⚡)');
+  return out;
+}
+
 // ---------------------------------------------------------------- 行动列表 v3: v2 去重/⚠ + 稳定卡id
 
 const reserveKey = (a: Extract<LegalMoves['actions'][number], { kind: 'reserve' }>): string =>
@@ -443,6 +535,8 @@ export function createV3(memoBox?: { current?: string }): V3 {
         `【上回合备忘】\n${memoBlock(view, seat, memo).join('\n')}`,
         `【流水账】(近${Math.min(memory.ledger.length, 8)}步)\n${memory.ledger.slice(-8).join('\n') || '(开局)'}`,
         `【目标追踪】\n${targetBlock(view, seat, memory).join('\n')}`,
+        `【对手路线威胁】\n${routeThreatBlock(view, seat).join('\n')}`,
+        `【我方中期路线】\n${routeBlock(view, seat, memory).join('\n')}`,
         `【经济】\n${economyBlock(view, seat).join('\n')}`,
         `【牌库匹配】\n${deckMatchBlock(view, seat).join('\n')}`,
         `【安全阀】${valveLine(view, seat)}`,
@@ -453,7 +547,8 @@ export function createV3(memoBox?: { current?: string }): V3 {
     }),
     digest: (sim, seat, _lm) => safe(() => {
       const memo = memoNow(advance(sim, seat, memory));
-      return [`【上回合备忘】${memo ? memoBlock(sim, seat, memo).join(' ; ') : '(无)'}`, '', '【竞速与阻断】', ...raceBlock(sim, seat), '', digestV2(sim, seat, _lm)].join('\n');
+      const threat = routeThreatBlock(sim, seat).filter((l) => l.startsWith('⚡'));
+      return [`【上回合备忘】${memo ? memoBlock(sim, seat, memo).join(' ; ') : '(无)'}`, '', '【竞速与阻断】', ...raceBlock(sim, seat), ...(threat.length ? ['', '【对手路线威胁】', ...threat] : []), '', digestV2(sim, seat, _lm)].join('\n');
     }),
   };
 }
@@ -492,13 +587,14 @@ const SYSTEM_PROMPT_V3 = `你是 Splendor Duel(璀璨宝石对决)棋手, 目标
 
 == 代码侧分析块(每回合注入, 全部由引擎状态推导, 是客观事实; 与你的记忆冲突时以分析块为准) ==
 【上回合备忘】你上回合的 memo 原文+提及卡的存活状态(承诺未兑现会标⚡) | 【流水账】双方近几步事件(按卡id辨认买/留) | 【目标追踪】你的近目标+缺口+存活状态(被截会显式宣布+给替代候选)
-【竞速与阻断】双方0/1/2回合可买与胜线、对手outs计数 | 【经济】特权/黄金/额外回合差
-【牌库匹配】未见高分卡按色分布+折扣溢出预警 | 【安全阀】 | 【补货/预留建议】 | 【阶段判定】
+【竞速与阻断】双方0/1/2回合可买与胜线、对手outs计数 | 【对手路线威胁】对手三线进度+推进卡+免费清单+⚡处置 | 【我方中期路线】代码锚定的2-4回合路线与关键卡
+【经济】特权/黄金/额外回合差 | 【牌库匹配】未见高分卡按色分布+折扣溢出预警 | 【安全阀】 | 【补货/预留建议】 | 【阶段判定】
 ⚡开头的行是触发条件命中的战术铁律: 每条要么执行, 要么用一句话说明为何不适用; 不允许无视.
 
 == 每回合思考流程(先读分析块, 再逐项一行短句; 每项必须引用分析块的数字/结论, 禁止复述局面) ==
 0. 对表: 【上回合备忘】(你上回合 make_move 附带的 memo) + 【目标追踪】 vs 当前局面 — 计划里的卡还活着吗? 已被对手买走就立即换到给出的替代候选; 若备忘承诺了锁定/阻断而未兑现(⚡行), 本回合必须处置或说明放弃理由.
 1. 竞速: 引用【竞速与阻断】=> 我领先/持平/落后; 对手outs=? (outs≥2 => 不阻断只抢跑; outs=1 => 阻断与抢跑取更快者; 0 => 推进自己计划).
+1.5 威胁处置: 【对手路线威胁】有⚡ => 本回合三选一处置(拿缺口色/锁推进卡/抢线); 【我方中期路线】是你的 2-4 回合锚, 默认按关键卡推进, 变更只在失效条件命中时.
 2. 阶段: 引用【阶段判定】的第一优先级.
 3. 经济: 【经济】+【安全阀】; 可选阶段先读【补货/预留建议】再决定 use_privilege/use_replenish/skip.
 4. 选择: 双目的最优; 棋盘有黄金且预留未满3 => 认真读【预留评估】, 预留=拿万能金+锁卡二合一.
@@ -520,7 +616,7 @@ const SYSTEM_PROMPT_V3 = `你是 Splendor Duel(璀璨宝石对决)棋手, 目标
 [token纪律] 宝石是燃料不是财富, 攒4-5个却无下回合购买计划=浪费; 拿3异色优先, 且尽量让3色同时服务两张卡(主目标+顺路L1). 黄金是过桥不是存款, 1-2回合内花掉. 手里始终留1张随时买得起的便宜卡当"安全阀"【安全阀】块会检查. 拿3同色或2珍珠会送对手特权(列表已标⚠), 慎重. 超10弃置提前规划.
 [防守时机] 前5回合几乎不阻断(自建引擎优先); 中局只做双目的阻断; 危局(对手15分/7冠/单色7分)阻断升为一等公民. 三个具体防守: 对手要拿偷取卡=>先花掉珍珠; 对手下一买触发皇家卡=>用黄金预留那张皇冠卡; 对手能先你买走目标卡=>立即转向别再攒那色(【目标追踪】⚠即此情形).
 [胜利路线] 10-12回合前保持至少两条胜利路径(分/皇冠/单色)形成压力迫使对手分散防守, 之后全速冲一条; 领先抢节奏结束, 落后用封锁拖慢. 同色胜利多在中局自然形成: 6-7分时盯住该色高分卡和百搭卡(百搭能让颜色胜利从7跳到10).
-[v3数字规则] 折扣颜色跟随【牌库匹配】的剩余分分布, 单色折扣>3仅当明确走单色胜利线; 额外回合卡差≥2时市场新出的额外回合卡优先截; 对手outs≥2时放弃阻断全力抢跑; 任何时刻保持安全阀; 第15回合仍<8分立即转买分(【阶段判定】会提示).`;
+[v3数字规则] 折扣颜色跟随【牌库匹配】的剩余分分布, 单色折扣>3仅当明确走单色胜利线; 额外回合卡差≥2时市场新出的额外回合卡优先截; 对手outs≥2时放弃阻断全力抢跑; 对手单色/皇冠线≥6且有其≤2回合推进卡(【对手路线威胁】⚡)时必须处置; 任何时刻保持安全阀; 第15回合仍<8分立即转买分(【阶段判定】会提示).`;
 
 export function llm3Agent(opts: LlmOptions = {}): Agent {
   const memoBox: { current?: string } = {};

@@ -2,8 +2,9 @@
 import { describe, expect, test } from 'bun:test';
 import { applyMove, applyReplenish, createGame, legalMoves, playerView, type GameState } from '../src/engine/game.js';
 import {
-  actionListV3, createV3, crossesWin, memoBlock, oppOuts, raceBlock, shortfall, targetBlock,
+  actionListV3, createV3, crossesWin, memoBlock, oppOuts, raceBlock, routeBlock, routeThreatBlock, shortfall, targetBlock,
 } from '../src/agents/llm3.js';
+import { CARDS } from '../src/engine/cards.js';
 
 /** 固定走法推进: 每步选第一个合法行动(确定性) */
 function step(st: GameState): GameState {
@@ -77,6 +78,41 @@ describe('llm3 备忘注入', () => {
   });
 });
 
+
+describe('llm3 路线威胁与中期路线', () => {
+  test('对手单色线临门+免费推进卡时触发⚡处置', () => {
+    const st = createGame({ seed: 3 });
+    const opp = st.players[1]!;
+    // 对手蓝列 9 分: 蓝3分 + 蓝4分 + 蓝2分
+    for (const id of ['3-7', '3-8', '2-16']) {
+      const def = CARDS.find((c) => c.id === id)!;
+      opp.cards.push({ def, color: def.color });
+    }
+    opp.points = 9; opp.bonuses.blue = 3;
+    // 金字塔放一张对手免费的蓝1分卡
+    const blue1 = CARDS.find((c) => c.color === 'blue' && c.points === 1)!;
+    opp.tokens = { black: 4, red: 4, green: 4, blue: 0, white: 4, pearl: 2, gold: 3 };
+    st.pyramid[1] = structuredClone(blue1);
+    const lines = routeThreatBlock(playerView(st, 0), 0).join('\n');
+    expect(lines).toContain('单色线(蓝) 9/10');
+    expect(lines).toContain('⚡');
+    expect(lines).toContain('对手0成本可买');
+  });
+
+  test('中期路线跨回合维持, 关键卡失守才变更', () => {
+    const mem = createV3().memory;
+    const st = createGame({ seed: 4 });
+    const v0 = playerView(st, 0);
+    const first = routeBlock(v0, 0, mem).join('\n');
+    expect(first).toMatch(/当前锚定: (总分线|皇冠线|单色线)/);
+    expect(first).toMatch(/关键卡|暂无/);
+    const r1 = mem.route!;
+    // 同局面再算: 维持不告警
+    const again = routeBlock(playerView(st, 0), 0, mem).join('\n');
+    expect(again).not.toContain('⚠路线变更');
+    expect(mem.route!.name).toBe(r1.name);
+  });
+});
 
 describe('llm3 竞速与阻断', () => {
   test('对手能买致胜卡时被计为 outs 并给出裁决', () => {
