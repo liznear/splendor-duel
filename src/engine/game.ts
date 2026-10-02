@@ -389,7 +389,7 @@ function defaultAssociateColor(p: PlayerState): Gem {
   return (Object.entries(count) as [Gem, number][]).sort((a, b) => b[1] - a[1])[0]![0];
 }
 
-function ownedColors(p: PlayerState): Gem[] {
+export function ownedColors(p: PlayerState): Gem[] {
   return [...new Set(p.cards.map((c) => c.color).filter((c): c is Gem => c !== null))];
 }
 

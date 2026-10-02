@@ -27,7 +27,12 @@ bun test             # 引擎规则自检 (Web e2e 见下)
 | `greedy` | 1 层前瞻 + 启发式估值（对随机胜率 ~80%） |
 | `llm[:provider/model]` | 大模型棋手；缺省用 `opencode-go/deepseek-v4.1-flash`（OPENCODE_API_KEY），可显式指定其他模型 |
 
-LLM agent 每回合收到：完整可公开信息局面（对手预留卡隐藏）+ 带编号的合法行动列表，通过调用 `make_move` 工具提交结构化走法（参数由 JSON Schema 约束，非法参数即时反馈给模型修正）；连续 3 轮未提交合法走法后回退随机。模型凭据复用 pi 的配置（`~/.pi/agent/auth.json` 等）。
+LLM agent 每回合分两个阶段与模型交互（按时机切换活跃 tool 列表， `session.setActiveToolsByName`）：
+
+1. **可选行动阶段**（仅当有特权或可补货时出现）：工具 `use_privilege`（特权拿格子， 可多次调用）/ `use_replenish`（主动补货）/ `skip_optional`（跳过）；每次调用在模拟状态上即时结算（`applyOption`）， 工具结果返回新棋盘。
+2. **强制行动阶段**：工具 `make_move`， 从按可选行动后棋盘重算的编号合法行动列表中选择。
+
+系统提示词内注入规则摘要 + 战术攻略（源自 splendortactics.com：关键数字 / 5秒对手扫描习惯 / 引擎优先级等）。条件参数（百搭卡颜色 / 皇家卡选择 / 偷取颜色 / 拿同色格 / 超10弃置）严格校验： 缺失或非法会返回带可选值清单的错误供模型自纠， 不静默回退默认值； 连续 3 轮未提交合法走法后回退随机。模型凭据复用 pi 的配置（`~/.pi/agent/auth.json` 等）。
 
 ## WebUI
 

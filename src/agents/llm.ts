@@ -1,42 +1,81 @@
 // LLM agent: 通过 pi coding agent SDK 调用大模型下棋 (tool-call 协议)
+// 回合分两阶段与模型交互, 每阶段有独立的上下文与活跃工具列表(session.setActiveToolsByName):
+//   阶段1(可选行动, 有特权/可补货时才出现): use_privilege / use_replenish / skip_optional
+//   阶段2(强制行动, 必有): make_move
+// 可选行动在模拟状态上即时结算(applyOption), 阶段2 的合法行动列表按模拟后棋盘重算;
+// 特权拿取不消耗随机数, 补货洗牌只依赖袋内容 => 最终拼装的 Move 交给引擎时与模拟完全一致.
 import type { Agent, TurnContext } from './agent.js';
 import {
-  applyMove, type CardDef, type GameState, type Gem, type Move, type NonGold, type TokenColor,
+  applyMove, applyOption, type CardDef, type GameState, legalMoves, type LegalMoves,
+  maxColorPointsOf, type Move, type NonGold, ownedColors, type TokenColor, type Gem,
 } from '../engine/game.js';
-import {
-  ABILITY_ZH, cellIndex, GEM_ZH, renderActions, TOKEN_ZH,
-} from '../render.js';
+import { ABILITY_ZH, actionText, cellIndex, cellName, GEM_ZH, renderActions, TOKEN_ZH } from '../render.js';
 import { fallbackMove } from './random.js';
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 
 type PiModule = typeof import('@earendil-works/pi-coding-agent');
 
-const ZH2CODE: Record<string, TokenColor> = {
-  白: 'white', 白色: 'white', 蓝: 'blue', 蓝色: 'blue', 绿: 'green', 绿色: 'green',
-  红: 'red', 红色: 'red', 黑: 'black', 黑色: 'black', 珠: 'pearl', 珍珠: 'pearl', 金: 'gold', 黄金: 'gold',
-};
 const GEM_ZH2CODE: Record<string, Gem> = {
   白: 'white', 白色: 'white', 蓝: 'blue', 蓝色: 'blue', 绿: 'green', 绿色: 'green',
   红: 'red', 红色: 'red', 黑: 'black', 黑色: 'black',
 };
+const NON_GOLD_ZH2CODE: Record<string, NonGold> = {
+  白: 'white', 白色: 'white', 蓝: 'blue', 蓝色: 'blue', 绿: 'green', 绿色: 'green',
+  红: 'red', 红色: 'red', 黑: 'black', 黑色: 'black', 珠: 'pearl', 珍珠: 'pearl',
+};
+const TOKEN_ZH2CODE: Record<string, TokenColor> = { ...NON_GOLD_ZH2CODE, 金: 'gold', 黄金: 'gold' };
+
+const ANSI = /\x1b\[[0-9;]*m/g;
+const stripAnsi = (s: string) => s.replace(ANSI, '');
+
+/** 棋盘上可用特权拿的格子清单 "A1白 B2珠 ..." */
+function privCellsLine(view: GameState): string {
+  return view.board
+    .map((t, i) => (t != null && t !== 'gold' ? `${cellName(i)}${TOKEN_ZH[t]}` : null))
+    .filter(Boolean).join(' ');
+}
 
 const SYSTEM_PROMPT = `你是 Splendor Duel(璀璨宝石对决)棋手, 目标是赢下双人对抗.
 
-规则摘要:
+== 规则摘要 ==
 - 棋盘 5x5 随机放 25 个 token: 白/蓝/绿/红/黑各4, 珍珠2, 黄金3. 花掉的 token 进袋, 补货时洗匀回填.
-- 每回合: [可选]用特权(每枚从棋盘拿任意非金token) -> [可选]补货(对手得1特权) -> 必须三选一:
-  1) 拿1-3个横/竖/斜连续相邻的非金token(黄金和空格会阻断); 若3个同色或含2珍珠, 对手得1特权
-  2) 拿1黄金+预留1张卡(金字塔或牌库顶, 最多预留3张)
-  3) 购买1张卡(金字塔或自己预留的): 支付费用-已有折扣, 黄金可当任意色, 珍珠无折扣抵扣
-- 卡: 左上分数/皇冠, 右上折扣(1-2), 左下费用, 可能有能力: 额外回合/拿同色(拿1个该卡颜色token)/偷取(偷对手1枚非金token)/特权. 百搭卡(无固定色)购买时指定叠放到自己已有的颜色列.
-- 买卡当场结算能力; 皇冠达到3/6时立刻从剩余皇家卡中领1张(加分+能力).
-- 回合结束时 token 超过10个要弃到10个.
-- 胜利(回合结束判定): 20分 或 10皇冠 或 同一颜色卡上累计10分.
-- 起始: 随机先手, 后手得1特权. 特权被拿完时可从对手处抢1枚.
+- 每回合分两步:
+  [可选] 用特权(每枚从棋盘拿任意非金token) 和/或 补货(对手得1特权), 顺序任选;
+  [必须] 三选一: 1) 拿1-3个横/竖/斜连续相邻的非金token(黄金和空格会阻断; 3个同色或含2珍珠 => 对手得1特权)
+    2) 拿1黄金+预留1张卡(金字塔或牌库顶, 最多预留3张) 3) 购买1张卡(金字塔或自己预留的).
+- 买卡: 支付费用-已有折扣, 黄金可当任意色, 珍珠无折扣抵扣. 卡能力(额外回合/拿同色/偷取/特权/百搭)当场结算.
+- 百搭卡(无固定色)购买时指定叠放到自己已有的颜色列, 其分数计入该色(同色胜利用).
+- 皇冠达到 3/6 时立刻从剩余皇家卡中领1张(免费分+能力). 回合结束时 token 超过10个要弃到10个.
+- 胜利(回合结束判定): 20分 或 10皇冠 或 同一颜色卡累计10分. 起始随机先手, 后手得1特权; 特权池空时从对手处夺取.
 
-提交走法: 唯一方式是调用 make_move 工具, 参数即走法(i 必填, 其余仅在需要时给出).
-参数不合法时工具会返回错误, 修正参数后重新调用. 不要输出 JSON 文本, 只用工具.`;
+== 交互协议(每回合分阶段, 工具列表按时机切换) ==
+- 阶段1(仅当有特权可用或可补货): 工具 use_privilege / use_replenish / skip_optional.
+  use_privilege 给出格子坐标数组(一次1-3格, 可多次调用直到特权用完); 都不划算就 skip_optional.
+  补货后仍可用特权(按先补货后特权执行), 但特权与补货不能交错多次.
+- 阶段2: 工具 make_move, 从编号行动列表中选 i(必填), 需要时带条件参数.
+- 参数校验是严格的: 百搭卡颜色/皇家卡选择/偷取颜色/拿同色格/超10弃置, 只要被触发就必须显式给出且合法,
+  缺失或非法会返回具体错误提示(含可选值清单), 按提示修正后重新调用即可, 不会静默采用默认值.
+- 不要输出 JSON 文本, 只用工具.
+
+== 战术攻略(源自 splendortactics.com, 务必遵守) ==
+关键数字: token上限10; 黄金全局仅3枚; 皇冠3/6触发皇家卡; 对手7皇冠=红色警报(一张2皇冠卡即10冠获胜);
+15分后一张L3+皇家卡可一波到20; 对手单色6-7分=颜色胜利威胁; L2卡总价一律7(折扣后实付差异巨大);
+全局仅15-20回合, 浪费一回合≈输掉5-7%的胜率.
+
+每回合5秒习惯(先于思考自己): 数对手的总分/皇冠数/单色最高分——这是对手能赢你的三个数字;
+问一句"对手下回合能否获胜?"——能则一切让位于阻断(买走/预留关键卡/拿走其所需色).
+
+核心原则:
+- 宝石是燃料不是财富. 能买卡就买; 攒4-5个token却没有下回合的购买计划=浪费复合优势.
+- 前5回合买L1建引擎: 0分但折扣颜色正确的卡 > 1分但折扣无用的卡; L2/L3费用中出现最多的颜色优先拿折扣.
+- 珍珠无折扣可抵, 全局仅2枚, 开局就抢; 「额外回合」能力的卡优先级最高(白拿一回合).
+- 黄金是过桥不是存款, 1-2回合内花掉; 预留=手术刀不是策略: 只预留2-3回合内买得起的卡, 通常不超过1张.
+- 拿token默认拿3个不同色的直线; 两个选择对自己等价时, 拿走对手需要的那个(免费防守);
+  拿3同色或2珍珠会送对手特权, 慎重; 对手预留满3张时其无法再预留, 趁窗口抢节奏.
+- 10-12回合前保持至少两条胜利路径(分/皇冠/单色), 之后全速冲一条; 领先抢节奏结束, 落后用封锁拖慢.
+- 对手7+皇冠 => 皇冠封锁最优先; 对手单色7+分 => 高分卡和百搭卡优先抢/预留; 百搭卡能让颜色胜利从7跳到10.
+- 皇家卡约等于免费分, 顺路凑皇冠不亏; 购买时问自己"这张卡让我离胜利更近吗?" 否则继续找.`;
 
 export interface LlmOptions {
   name?: string;
@@ -45,70 +84,247 @@ export interface LlmOptions {
   verbose?: boolean; // 打印模型原始回复(调试)
 }
 
-const DEFAULT_MODEL = 'opencode-go/qwen3.8-flash';
-
-const ZH_COLORS = ['白', '蓝', '绿', '红', '黑', '珍珠'] as const;
+const DEFAULT_MODEL = 'opencode-go/deepseek-v4.1-flash';
 const ZH_GEMS = ['白', '蓝', '绿', '红', '黑'] as const;
+const ZH_NON_GOLD = ['白', '蓝', '绿', '红', '黑', '珍珠'] as const;
 
-// make_move 工具参数 schema: 结构化保证字段名/类型/枚举合法, 剩余语义由 execute 校验
-const MOVE_PARAMS = Type.Object({
-  i: Type.Integer({ description: '必填. 【可执行的行动】列表里的编号(1开始)' }),
-  privileges: Type.Optional(Type.Array(Type.String(), {
-    description: '用特权拿 token 的棋盘坐标, 每枚特权一格, 如 ["C3","C4"]',
-  })),
-  replenish: Type.Optional(Type.Boolean({ description: 'true = 主动补货(对手得1特权)' })),
-  associateColor: Type.Optional(Type.Union(ZH_GEMS.map((c) => Type.Literal(c)), {
-    description: '购买百搭卡时叠放到的颜色列',
-  })),
-  royalPick: Type.Optional(Type.Integer({ description: '领皇家卡: 皇家卡列表下标(0开始)' })),
-  stealPick: Type.Optional(Type.Union(ZH_COLORS.map((c) => Type.Literal(c)), {
-    description: '偷取对手 token 的颜色(非金)',
-  })),
-  takeSameCell: Type.Optional(Type.String({ description: '「拿同色」选择的棋盘坐标, 如 "B2"' })),
-  discard: Type.Optional(
-    Type.Record(Type.String(), Type.Integer({ minimum: 1 }), {
-      description: '超 10 弃置, 如 {"白": 2, "珍珠": 1}; 键为颜色中文, 总数须正好等于超出量',
-    }),
-  ),
-});
+// 当前回合的提交槽: 各工具 execute 读写, chooseMove 驱动
+interface TurnSlot {
+  base: GameState; // 回合初始状态: make_move 预演用(可选行动尚未执行, 预演时连可选行动一起重放)
+  sim: GameState; // 模拟状态: 阶段1 每次可选行动后前进(上下文/合法性重算用)
+  part: Partial<Move>; // 组装中的走法
+  phase: 'optional' | 'mandatory' | 'done';
+  lm: LegalMoves; // 阶段2 用: 按 sim 重算的合法行动
+  submitted: boolean;
+}
+
+const err = (text: string) => ({ content: [{ type: 'text' as const, text: `错误: ${text}` }], details: {} });
+const ok = (text: string) => ({ content: [{ type: 'text' as const, text }], details: {} });
 
 export function llmAgent(opts: LlmOptions = {}): Agent {
   let session: Awaited<ReturnType<PiModule['createAgentSession']>>['session'] | null = null;
-  let pi: PiModule | null = null;
   let useModel = opts.model;
-  // 当前回合的提交槽: execute 写入, chooseMove 读取
-  let slot: { ctx: TurnContext; move: Move | null } | null = null;
+  let slot: TurnSlot | null = null;
   let lastRaw = '';
+
+  // ---- 阶段1 工具: 用特权 (可在一次 run 内多次调用, 每次即时结算并展示新棋盘) ----
+  const privilegeTool = defineTool({
+    name: 'use_privilege',
+    label: '用特权拿 token',
+    description: '用特权: 每枚特权从棋盘拿 1 个任意非金 token. 参数为格子坐标数组(如 ["C3","C4"]), 一次 1-3 格, 可多次调用. 特权拿过的格子本回合强制行动不可再拿.',
+    promptSnippet: '用 use_privilege 提交特权拿取的格子',
+    parameters: Type.Object({
+      cells: Type.Array(Type.String(), {
+        minItems: 1, maxItems: 3,
+        description: '格子坐标数组, 如 ["C3","C4"]; 数量不得超过剩余特权',
+      }),
+    }),
+    async execute(_id, params) {
+      if (!slot || slot.phase !== 'optional') return err('当前不在可选行动阶段');
+      if (slot.part.replenish && slot.part.privileges?.length) {
+        return err('特权与补货不能交错使用(已补货且已用过特权)');
+      }
+      const cells = params.cells.map(cellIndex);
+      if (cells.some((c) => c == null)) {
+        return err(`坐标格式不对, 应为 A-E 列 + 1-5 行, 如 "C3"; 收到 ${JSON.stringify(params.cells)}. 可拿的格子: ${privCellsLine(slot.sim)}`);
+      }
+      try {
+        slot.sim = applyOption(slot.sim, { privileges: cells as number[] });
+      } catch (e) {
+        return err(`${(e as Error).message}. 剩余特权 ${slot.sim.players[slot.sim.current]!.privileges} 枚; 可拿的格子(非金非空): ${privCellsLine(slot.sim)}\n${renderBoardCompact(slot.sim)}\n请修正后重新调用 use_privilege`);
+      }
+      slot.part.privileges = [...(slot.part.privileges ?? []), ...(cells as number[])];
+      const left = slot.sim.players[slot.sim.current]!.privileges;
+      return ok(`OK: 已用特权拿 ${cells.map((c) => cellName(c!)).join(' ')}. 剩余特权 ${left}.\n${renderBoardCompact(slot.sim)}\n可继续 use_privilege / use_replenish, 或 skip_optional 结束可选阶段.`);
+    },
+  });
+
+  // ---- 阶段1 工具: 主动补货 (对手得 1 特权) ----
+  const replenishTool = defineTool({
+    name: 'use_replenish',
+    label: '主动补货',
+    description: '主动补充棋盘: 洗袋按螺旋回填空格, 但对手获得 1 特权. 仅当棋盘已无可用的好线/好卡时才值得. 补货后仍可用特权(按先补货后特权执行).',
+    promptSnippet: '用 use_replenish 主动补货',
+    parameters: Type.Object({}),
+    async execute() {
+      if (!slot || slot.phase !== 'optional') return err('当前不在可选行动阶段');
+      if (slot.part.replenish) return err('每回合只能补货一次');
+      try {
+        slot.sim = applyOption(slot.sim, { replenish: true });
+      } catch (e) {
+        return err(`${(e as Error).message}. 请修正后重新调用`);
+      }
+      slot.part.replenish = true;
+      if (!slot.part.privileges?.length) slot.part.replenishFirst = true; // 先补货后特权
+      return ok(`OK: 棋盘已补充, 对手获得 1 特权.\n${renderBoardCompact(slot.sim)}\n可再 use_privilege(将按先补货后特权执行), 或 skip_optional 结束可选阶段.`);
+    },
+  });
+
+  // ---- 阶段1 工具: 跳过可选行动 ----
+  const skipTool = defineTool({
+    name: 'skip_optional',
+    label: '跳过可选行动',
+    description: '不用特权也不补货, 直接进入强制行动(拿token/预留/买卡).',
+    promptSnippet: '用 skip_optional 跳过可选行动',
+    parameters: Type.Object({}),
+    async execute() {
+      if (!slot || slot.phase !== 'optional') return err('当前不在可选行动阶段');
+      slot.phase = 'done';
+      return ok('OK: 跳过可选行动, 即将进入强制行动.');
+    },
+  });
+
+  // ---- 阶段2 工具: 提交强制行动 ----
+  const MOVE_PARAMS = Type.Object({
+    i: Type.Integer({ description: '必填. 【可执行的行动】列表里的编号(1开始)' }),
+    associateColor: Type.Optional(Type.Union(ZH_GEMS.map((c) => Type.Literal(c)), {
+      description: '购买百搭卡时必须给出: 叠放到的颜色列(须为自己已有卡的颜色)',
+    })),
+    royalPick: Type.Optional(Type.Integer({ description: '领皇家卡时必须给出: 皇家卡列表下标(0开始)' })),
+    stealPick: Type.Optional(Type.Union(ZH_NON_GOLD.map((c) => Type.Literal(c)), {
+      description: '触发偷取时必须给出: 偷对手 token 的颜色(非金)',
+    })),
+    takeSameCell: Type.Optional(Type.String({ description: '触发「拿同色」时必须给出: 拿的棋盘坐标, 如 "B2"' })),
+    discard: Type.Optional(
+      Type.Record(Type.String(), Type.Integer({ minimum: 1 }), {
+        description: '回合末 token 超 10 时必须给出: 如 {"白": 2, "珍珠": 1}; 键为颜色中文, 总数须正好等于超出量',
+      }),
+    ),
+  });
 
   const moveTool = defineTool({
     name: 'make_move',
-    label: '提交走法',
-    description: '提交本回合走法(唯一方式). i 必填; 其余字段仅在对应情况需要时给出. 参数不合法会返回错误, 修正后重新调用.',
-    promptSnippet: '用 make_move 提交走法',
+    label: '提交强制行动',
+    description: '从【可执行的行动】编号列表中选择 i(必填); 触发条件效果(百搭卡/皇家卡/偷取/拿同色/超10弃置)时对应参数必填, 缺失或非法会返回具体错误(不会静默用默认值), 修正后重新调用.',
+    promptSnippet: '用 make_move 提交强制行动',
     parameters: MOVE_PARAMS,
     async execute(_toolCallId, params) {
-      if (!slot) return { content: [{ type: 'text', text: '错误: 当前没有进行中的回合' }], details: {} };
-      const raw = JSON.stringify(params);
-      // SAFETY: TypeBox Static 类型无索引签名; 参数结构与 jsonToMove 的宽松 Record 契约一致, 语义由 applyMove 预演兜底
-      const move = jsonToMove(slot.ctx, params as unknown as Record<string, unknown>);
-      if (!move) {
-        return { content: [{ type: 'text', text: `错误: 行动编号 i 无效 (须为 1-${slot.ctx.legal.actions.length}). 请重选后重新调用 make_move` }], details: {} };
+      if (!slot || slot.phase !== 'mandatory') return err('当前不在强制行动阶段');
+      const i = Number(params.i);
+      if (!Number.isInteger(i) || i < 1 || i > slot.lm.actions.length) {
+        return err(`行动编号 i=${JSON.stringify(params.i)} 无效 (须为 1-${slot.lm.actions.length} 的整数, 即【可执行的行动】列表里的编号). 请重选后重新调用 make_move`);
       }
-      try {
-        applyMove(slot.ctx.view, move); // 预演校验, 不修改 view
-      } catch (err) {
-        return { content: [{ type: 'text', text: `错误: ${(err as Error).message}. 请修正参数后重新调用 make_move` }], details: {} };
+      const sim = slot.sim;
+      const me = sim.players[sim.current]!;
+      const opp = sim.players[1 - sim.current]!;
+      const action = slot.lm.actions[i - 1]!;
+      const move: Partial<Move> = { ...slot.part, action };
+      const bad: string[] = [];
+      const actDesc = stripAnsi(actionText(sim, sim.current, action));
+
+      // ---- 条件参数严格校验: 缺失/非法直接报错让模型自纠, 不静默回退引擎默认 ----
+      const card = action.kind === 'buy'
+        ? (action.from.kind === 'pyramid' ? sim.pyramid[action.from.slot] : me.reserved[action.from.index])
+        : null;
+
+      // 1) 百搭卡颜色
+      let color: Gem | null = card?.color ?? null;
+      if (card?.isAssociate) {
+        const legal = ownedColors(me);
+        const zh = legal.map((g) => GEM_ZH[g]).join('/');
+        const raw = params.associateColor;
+        const picked = typeof raw === 'string' ? GEM_ZH2CODE[raw] : undefined;
+        if (picked == null) bad.push(`购买百搭卡必须指定 associateColor(收到 ${JSON.stringify(raw ?? null)}); 可选(你已有卡的颜色): ${zh}, 如 {"associateColor":"${legal.length ? GEM_ZH[legal[0]!] : ''}"}`);
+        else if (!legal.includes(picked)) bad.push(`associateColor "${raw}" 不是你已有卡的颜色; 可选: ${zh}`);
+        else color = picked;
       }
-      lastRaw = raw;
-      slot.move = move;
-      return { content: [{ type: 'text', text: 'OK, 走法已接受' }], details: {} };
+
+      // 2) 皇家卡 (皇冠过 3/6 里程碑时领取)
+      let royalAbility: string | null = null;
+      if (card && sim.royals.length > 1
+        && ((me.royalsTaken === 0 && me.crowns + card.crowns >= 3) || (me.royalsTaken === 1 && me.crowns + card.crowns >= 6))) {
+        const rp = params.royalPick;
+        if (!Number.isInteger(rp) || rp! < 0 || rp! >= sim.royals.length) {
+          bad.push(`本次购买将触发领取皇家卡(皇冠到 ${me.royalsTaken === 0 ? 3 : 6}), 必须指定 royalPick(收到 ${JSON.stringify(rp ?? null)}); 可选: ${sim.royals.map((r, idx) => `${idx}:${r.points}分${r.ability ? `【${ABILITY_ZH[r.ability] ?? r.ability}】` : ''}`).join('  ')}; 注意选中有偷取能力的还需 stealPick`);
+        } else {
+          move.royalPick = Number(rp);
+          royalAbility = sim.royals[Number(rp)]!.ability;
+        }
+      } else if (Number.isInteger(params.royalPick)) {
+        move.royalPick = Number(params.royalPick);
+      }
+
+      // 3) 偷取 (卡能力或所选皇家卡能力)
+      const oppHas = (['white', 'blue', 'green', 'red', 'black', 'pearl'] as NonGold[]).filter((c) => opp.tokens[c] > 0);
+      const stealFrom = card?.ability === 'steal' ? '卡的偷取能力' : royalAbility === 'steal' ? '皇家卡的偷取能力' : null;
+      if (stealFrom && oppHas.length > 0) {
+        const raw = params.stealPick;
+        const picked = typeof raw === 'string' ? NON_GOLD_ZH2CODE[raw] : undefined;
+        if (picked == null || opp.tokens[picked] <= 0) {
+          bad.push(`将触发偷取(${stealFrom}), 必须指定 stealPick(收到 ${JSON.stringify(raw ?? null)}); 对手持有非金 token: ${oppHas.map((c) => `${TOKEN_ZH[c]}×${opp.tokens[c]}`).join(' ')}, 如 {"stealPick":"${TOKEN_ZH[oppHas[0]!]}"}`);
+        } else move.stealPick = picked;
+      }
+
+      // 4) 拿同色
+      if (card?.ability === 'takeSame' && color) {
+        const cells = sim.board.map((t, idx) => (t === color ? idx : -1)).filter((x) => x >= 0);
+        if (cells.length > 0) {
+          const raw = params.takeSameCell;
+          const c = typeof raw === 'string' ? cellIndex(raw) : null;
+          if (c == null || sim.board[c] !== color) {
+            bad.push(`将触发「拿同色」, 必须指定 takeSameCell 为 1 个${GEM_ZH[color]}色格(收到 ${JSON.stringify(raw ?? null)}); 场上可选: ${cells.map((cc) => cellName(cc)).join(' ')}`);
+          } else move.takeSameCell = c;
+        }
+      }
+
+      // 5) 弃置: 预演后从日志读取超出量, 要求 discard 总数恰等于它
+      if (bad.length === 0) {
+        let after: GameState;
+        try {
+          after = applyMove(slot.base, move as Move); // 预演: 从回合初始状态整体重放(可选+强制), 不修改 base/sim
+        } catch (e) {
+          return err(`${(e as Error).message}.\n你选择的行动: ${actDesc}\n当前 token: ${(Object.entries(me.tokens) as [TokenColor, number][]).filter(([, n]) => n > 0).map(([c, n]) => `${TOKEN_ZH[c]}×${n}`).join(' ') || '无'}. 请修正参数后重新调用 make_move`);
+        }
+        const dlog = after.log.filter((l) => l.includes('弃置')).pop() ?? '';
+        const excess = Number(/弃置 (\d+) 枚/.exec(dlog)?.[1] ?? 0);
+        const d: Partial<Record<TokenColor, number>> = {};
+        const unknown: string[] = [];
+        if (params.discard && typeof params.discard === 'object') {
+          for (const [k, v] of Object.entries(params.discard)) {
+            const code = TOKEN_ZH2CODE[k];
+            if (code && Number(v) > 0) d[code] = Number(v);
+            else if (!code) unknown.push(k);
+          }
+        }
+        const totalD = Object.values(d).reduce((s, n) => s + (n ?? 0), 0);
+        const inv = (Object.entries(me.tokens) as [TokenColor, number][])
+          .filter(([, n]) => n > 0).map(([c, n]) => `${TOKEN_ZH[c]}×${n}`).join(' ') || '无';
+        if (excess === 0) {
+          if (params.discard && Object.keys(params.discard).length > 0) bad.push(`回合末 token 未超 10, 无需 discard(你给了 ${JSON.stringify(params.discard)})`);
+        } else if (totalD !== excess || unknown.length > 0) {
+          const ex = (Object.entries(me.tokens) as [TokenColor, number][]).find(([, n]) => n > 0);
+          bad.push(`回合结束 token 将超 10, 必须弃 ${excess} 枚, 但你的 discard 共 ${totalD} 枚${unknown.length ? `(无法识别的颜色键: ${unknown.join(',')})` : ''}; 行动前 token: ${inv}(本次行动可能还会增加); 请给出总数恰为 ${excess} 的 discard, 如 {"discard":{"${ex ? TOKEN_ZH[ex[0]] : '白'}":${Math.min(ex?.[1] ?? 1, excess)}}}`);
+        } else {
+          // 软上限: 行动前持有 + 拿取量 + 1(能力增益)
+          const takeGain: Partial<Record<TokenColor, number>> = {};
+          if (action.kind === 'take') {
+            for (const cc of action.cells) {
+              const t = sim.board[cc]!;
+              takeGain[t] = (takeGain[t] ?? 0) + 1;
+            }
+          }
+          for (const [c, n] of Object.entries(d) as [TokenColor, number][]) {
+            const cap = me.tokens[c] + (takeGain[c] ?? 0) + 1;
+            if (n > cap) bad.push(`discard 中 ${TOKEN_ZH[c]}×${n} 超过可能的持有量(约 ≤${cap}; 当前 ${me.tokens[c]} + 拿取 ${(takeGain[c] ?? 0)} + 能力≤1)`);
+          }
+          if (bad.length === 0 && Object.keys(d).length > 0) move.discard = d;
+        }
+      }
+
+      if (bad.length > 0) {
+        return err(`你选择的行动: ${actDesc}\n${bad.map((b, k) => `${k + 1}. ${b}`).join('\n')}\n请修正后重新调用 make_move(其余参数不变)`);
+      }
+      lastRaw = JSON.stringify(params);
+      slot.part = move;
+      slot.submitted = true;
+      return ok('OK, 走法已接受');
     },
   });
 
   async function ensureSession() {
     if (session) return session;
-    pi = await import('@earendil-works/pi-coding-agent');
-    const rt = await pi!.ModelRuntime.create();
+    const pi = await import('@earendil-works/pi-coding-agent');
+    const rt = await pi.ModelRuntime.create();
     const avail = await rt.getAvailable();
     const find = (spec: string) => {
       const [provider, ...rest] = spec.split('/');
@@ -125,18 +341,18 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
       model = find(DEFAULT_MODEL) ?? avail[0] ?? undefined;
       if (model) useModel = `${(model as { provider: string }).provider}/${(model as { id: string }).id}`;
     }
-    const loader = new pi!.DefaultResourceLoader({
+    const loader = new pi.DefaultResourceLoader({
       cwd: process.cwd(),
-      agentDir: pi!.getAgentDir(),
+      agentDir: pi.getAgentDir(),
       systemPromptOverride: () => SYSTEM_PROMPT,
       appendSystemPromptOverride: () => [],
     });
     await loader.reload();
-    const { session: s } = await pi!.createAgentSession({
+    const { session: s } = await pi.createAgentSession({
       resourceLoader: loader,
-      sessionManager: pi!.SessionManager.inMemory(),
-      tools: ['make_move'], // 只启用 make_move, 禁掉全部内置工具
-      customTools: [moveTool as never],
+      sessionManager: pi.SessionManager.inMemory(),
+      tools: ['use_privilege', 'use_replenish', 'skip_optional', 'make_move'], // 全量注册; 每阶段用 setActiveToolsByName 取子集(初始 allowlist 会限制可切换范围)
+      customTools: [privilegeTool as never, replenishTool as never, skipTool as never, moveTool as never],
       ...(model ? { model: model as never } : {}),
       ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
     });
@@ -144,73 +360,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     return session;
   }
 
-  function jsonToMove(ctx: TurnContext, obj: Record<string, unknown>): Move | null {
-    const i = Number(obj.i);
-    if (!Number.isInteger(i) || i < 1 || i > ctx.legal.actions.length) return null;
-    const move: Move & { privileges?: number[]; replenish?: boolean } = { action: ctx.legal.actions[i - 1]! };
-    if (Array.isArray(obj.privileges)) {
-      const cells = (obj.privileges as unknown[])
-        .map((x) => cellIndex(String(x)))
-        .filter((x): x is number => x != null);
-      if (cells.length > 0) move.privileges = cells;
-    }
-    if (obj.replenish === true) move.replenish = true;
-    const assoc = obj.associateColor;
-    if (typeof assoc === 'string' && GEM_ZH2CODE[assoc]) move.associateColor = GEM_ZH2CODE[assoc];
-    if (Number.isInteger(obj.royalPick)) move.royalPick = Number(obj.royalPick);
-    const steal = obj.stealPick;
-    if (typeof steal === 'string' && ZH2CODE[steal] && ZH2CODE[steal] !== 'gold') move.stealPick = ZH2CODE[steal] as NonGold;
-    if (typeof obj.takeSameCell === 'string') {
-      const c = cellIndex(obj.takeSameCell);
-      if (c != null) move.takeSameCell = c;
-    }
-    if (obj.discard && typeof obj.discard === 'object') {
-      const d: Partial<Record<TokenColor, number>> = {};
-      for (const [k, v] of Object.entries(obj.discard as Record<string, unknown>)) {
-        const code = ZH2CODE[k];
-        if (code && Number(v) > 0) d[code] = Number(v);
-      }
-      if (Object.keys(d).length > 0) move.discard = d;
-    }
-    return move;
-  }
-
-  function buildPrompt(ctx: TurnContext): string {
-    const { view, seat } = ctx;
-    const me = view.players[seat]!;
-    const opp = view.players[1 - seat]!;
-    const lines: string[] = [];
-    lines.push('【当前局面】(棋盘坐标 A-E 列 1-5 行)');
-    lines.push(renderBoardCompact(view));
-    lines.push('', '【金字塔】');
-    view.pyramid.forEach((c, i) => c && lines.push(`${i + 1}: ${cardCompact(c)}`));
-    lines.push(`牌库剩余: L1:${view.decks[0]!.length} L2:${view.decks[1]!.length} L3:${view.decks[2]!.length}`);
-    lines.push(`皇家卡(下标从0): ${view.royals.map((r, i) => `${i}:${r.points}分${r.ability ? ABILITY_ZH[r.ability] : ''}`).join(' ') || '无'}`);
-    lines.push(`特权池剩余: ${3 - me.privileges - opp.privileges}`);
-    lines.push('', `【我方 ${me.name}】分数${me.points} 皇冠${me.crowns} 特权${me.privileges} token:${
-      (Object.entries(me.tokens) as [TokenColor, number][])
-        .filter(([, n]) => n > 0).map(([c, n]) => `${TOKEN_ZH[c]}${n}`).join(' ') || '无'
-    } 折扣:${(Object.entries(me.bonuses) as [Gem, number][]).filter(([, n]) => n > 0).map(([g, n]) => `${GEM_ZH[g]}${n}`).join(' ') || '无'}`);
-    if (me.reserved.length > 0) {
-      lines.push(`预留: ${me.reserved.map((c) => cardCompact(c)).join(' ; ')}`);
-    }
-    lines.push('', `【对手 ${opp.name}】分数${opp.points} 皇冠${opp.crowns} 特权${opp.privileges} token:${
-      (Object.entries(opp.tokens) as [TokenColor, number][])
-        .filter(([, n]) => n > 0).map(([c, n]) => `${TOKEN_ZH[c]}${n}`).join(' ') || '无'
-    } 折扣:${(Object.entries(opp.bonuses) as [Gem, number][]).filter(([, n]) => n > 0).map(([g, n]) => `${GEM_ZH[g]}${n}`).join(' ') || '无'}`);
-    if (opp.reserved.length > 0) {
-      // 明留(金字塔)公开, 盲留(牌库顶)仅数量
-      const open = opp.reserved.filter((c) => c.id !== 'hidden');
-      const blindN = opp.reserved.length - open.length;
-      if (open.length > 0) lines.push(`对手明留卡: ${open.map((c) => cardCompact(c)).join(' ; ')}`);
-      if (blindN > 0) lines.push(`对手盲留: ${blindN}张(内容保密)`);
-    }
-    lines.push('', `【我的已购卡】${me.cards.map((c) => `${c.color ? GEM_ZH[c.color] : '分'}${c.def.points}${c.def.crowns ? '♛' + c.def.crowns : ''}`).join(' ') || '无'}`);
-    lines.push('', `【可执行的行动】(输入编号 i):`);
-    lines.push(renderActions(ctx.view, ctx.seat, ctx.legal));
-    lines.push('', '调用 make_move 工具提交走法 (i 必填; 需要时补充 privileges/associateColor/royalPick/stealPick/takeSameCell/discard):');
-    return lines.join('\n');
-  }
+  // ---- 上下文渲染 ----
 
   function renderBoardCompact(view: GameState): string {
     const rows: string[] = ['    A B C D E'];
@@ -230,20 +380,136 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     return `L${c.level} ${c.isAssociate ? '百搭' : c.color ? GEM_ZH[c.color as Gem] : '分'}卡 ${c.points}分${c.crowns ? `♛${c.crowns}` : ''}${c.bonus ? `折${c.bonus}` : ''} 费${cost || 0}${c.ability ? ` 【${ABILITY_ZH[c.ability] ?? c.ability}】` : ''}`;
   }
 
+  function playerCompact(view: GameState, seat: 0 | 1): string {
+    const p = view.players[seat]!;
+    const tokens = (Object.entries(p.tokens) as [TokenColor, number][])
+      .filter(([, n]) => n > 0).map(([c, n]) => `${TOKEN_ZH[c]}${n}`).join(' ') || '无';
+    const bonuses = (Object.entries(p.bonuses) as [Gem, number][])
+      .filter(([, n]) => n > 0).map(([g, n]) => `${GEM_ZH[g]}${n}`).join(' ') || '无';
+    const label = seat === view.current ? '(当前行动方)' : '';
+    return [
+      `${p.name}${label}: 分数${p.points}/20 皇冠${p.crowns}/10 特权${p.privileges} token: ${tokens}`,
+      `  折扣: ${bonuses} 单色最高分: ${maxColorPointsOf(p)}/10${p.royals.length ? ` 皇家卡×${p.royals.length}` : ''}`,
+      `  已购卡: ${p.cards.map((c) => `${c.color ? GEM_ZH[c.color] : '分'}${c.def.points}${c.def.crowns ? '♛' + c.def.crowns : ''}`).join(' ') || '无'}`,
+    ].join('\n');
+  }
+
+  /** 共享局面块(不含行动列表), 阶段1/阶段2 复用 */
+  function buildContext(view: GameState, seat: 0 | 1): string {
+    const me = view.players[seat]!;
+    const opp = view.players[1 - seat]!;
+    const lines: string[] = [];
+    lines.push('【棋盘】(坐标 A-E 列 1-5 行)');
+    lines.push(renderBoardCompact(view));
+    lines.push('', '【金字塔】');
+    view.pyramid.forEach((c, i) => c && lines.push(`${i + 1}: ${cardCompact(c)}`));
+    lines.push(`牌库剩余: L1:${view.decks[0]!.length} L2:${view.decks[1]!.length} L3:${view.decks[2]!.length}`);
+    lines.push(`皇家卡(下标从0): ${view.royals.map((r, i) => `${i}:${r.points}分${r.ability ? ABILITY_ZH[r.ability] : ''}`).join(' ') || '无'}`);
+    lines.push(`公共特权池剩余: ${3 - me.privileges - opp.privileges}  袋中token: ${view.bag.length}`);
+    lines.push('', `【我方】\n${playerCompact(view, seat)}`);
+    if (me.reserved.length > 0) lines.push(`  预留: ${me.reserved.map((c) => cardCompact(c)).join(' ; ')}`);
+    lines.push('', `【对手】\n${playerCompact(view, (1 - seat) as 0 | 1)}`);
+    if (opp.reserved.length > 0) {
+      // 明留(金字塔)公开, 盲留(牌库顶)仅数量
+      const open = opp.reserved.filter((c) => c.id !== 'hidden');
+      const blindN = opp.reserved.length - open.length;
+      if (open.length > 0) lines.push(`  对手明留卡: ${open.map((c) => cardCompact(c)).join(' ; ')}`);
+      if (blindN > 0) lines.push(`  对手盲留: ${blindN}张(内容保密)`);
+    }
+    // 威胁提示(5秒习惯自动化)
+    const threats: string[] = [];
+    if (opp.crowns >= 7) threats.push(`对手皇冠 ${opp.crowns}/10, 一张皇冠卡就可能获胜 => 皇冠封锁最优先`);
+    else if (opp.crowns >= 5) threats.push(`对手皇冠 ${opp.crowns}/10, 接近警戒线7`);
+    if (maxColorPointsOf(opp) >= 7) threats.push(`对手单色最高 ${maxColorPointsOf(opp)}/10 分 => 高分卡/百搭卡警惕被其凑满`);
+    if (opp.points >= 15) threats.push(`对手 ${opp.points}/20 分, 一张L3+皇家卡可能一波结束 => 评估其下回合能否获胜`);
+    if (me.points >= 15 || me.crowns >= 8 || maxColorPointsOf(me) >= 8) threats.push(`我方已接近胜利(${me.points}分/${me.crowns}冠/单色${maxColorPointsOf(me)}分), 优先冲终点而非发育`);
+    if (threats.length) lines.push('', `【威胁检测】\n- ${threats.join('\n- ')}`);
+    return lines.join('\n');
+  }
+
+  function summarizeOptional(part: Partial<Move>, before: GameState): string {
+    const parts: string[] = [];
+    if (part.privileges?.length) {
+      const cells = part.privileges.map((c) => `${cellName(c)}(${before.board[c] ? TOKEN_ZH[before.board[c]!] : '?'})`).join(' ');
+      parts.push(`已用特权 ${part.privileges.length} 枚拿了: ${cells}`);
+    }
+    if (part.replenish) parts.push('已主动补货(对手得1特权)');
+    return parts.length ? parts.join('; ') : '未使用(直接跳过)';
+  }
+
+  function buildPhase1Prompt(ctx: TurnContext, sim: GameState): string {
+    const me = sim.players[ctx.seat]!;
+    const lm = legalMoves(sim);
+    const nTake = lm.actions.filter((a) => a.kind === 'take').length;
+    const nRes = lm.actions.filter((a) => a.kind === 'reserve').length;
+    const nBuy = lm.actions.filter((a) => a.kind === 'buy').length;
+    const lines: string[] = [];
+    lines.push(`第 ${ctx.turn + 1} 回合, 轮到你. 先决定【可选行动】(可以都不用):`);
+    lines.push(buildContext(sim, ctx.seat));
+    lines.push('', '【可选行动阶段】');
+    if (me.privileges > 0) {
+      lines.push(`你有特权 ${me.privileges} 枚, 每枚可拿棋盘任意非金格: ${privCellsLine(sim)}`);
+    }
+    if (lm.canReplenish) {
+      lines.push(`可主动补货(袋中 ${sim.bag.length} 枚): 洗袋回填空格, 但对手得 1 特权.`);
+    }
+    lines.push(`强制行动预览(可选行动后可能变化): 拿取 ${nTake} 种 / 预留 ${nRes} 种 / 购买 ${nBuy} 种.`);
+    lines.push('提示: 特权优先拿珍珠或对手急需的色; 棋盘还有好线/可买的卡时通常不补货; 特权拿过的格子强制行动阶段不可再拿.');
+    lines.push('调用工具提交: use_privilege(格子数组) / use_replenish() / skip_optional().');
+    return lines.join('\n');
+  }
+
+  function buildPhase2Prompt(ctx: TurnContext, sim: GameState, part: Partial<Move>, lm: LegalMoves, failMsg: string): string {
+    const me = sim.players[ctx.seat]!;
+    const lines: string[] = [];
+    lines.push(`继续第 ${ctx.turn + 1} 回合 —— 现在【必须】从下面列表选一个强制行动:`);
+    lines.push(buildContext(sim, ctx.seat));
+    lines.push('', `本回合可选行动: ${summarizeOptional(part, ctx.view)}`);
+    if (me.reserved.length > 0) lines.push(`我的预留卡: ${me.reserved.map((c, i) => `${i + 1}: ${cardCompact(c)}`).join(' ; ')}`);
+    lines.push('', `【可执行的行动】(编号 i, 共 ${lm.actions.length} 个):`);
+    lines.push(stripAnsi(renderActions(sim, ctx.seat, lm)));
+    lines.push('', '调用 make_move 提交 (i 必填; 触发时必填: associateColor=买百搭卡选色 / royalPick=领皇家卡下标 / stealPick=偷取颜色 / takeSameCell=拿同色格 / discard=超10弃置. 缺失会返回错误并列出可选值, 按提示补齐重调):');
+    if (failMsg) lines.push(`上一次失败: ${failMsg}\n请调用 make_move 工具提交合法走法.`);
+    return lines.join('\n');
+  }
+
   return {
     name: opts.name ?? `LLM${opts.model ? `(${opts.model.split('/').pop()})` : ''}`,
-    // 最近一次模型原始输出(接受的工具调用参数或失败时的文本), UI 展示用
     get lastRaw() { return lastRaw; },
     async chooseMove(ctx: TurnContext): Promise<Move> {
       const s = await ensureSession();
+      const me = ctx.view.players[ctx.seat]!;
+      const canPriv = me.privileges > 0 && ctx.legal.privilegeCells.length > 0;
+
+      // ---- 阶段1: 可选行动 (仅当有特权或可补货) ----
+      let sim = ctx.view;
+      const part: Partial<Move> = {};
+      if (canPriv || ctx.legal.canReplenish) {
+        slot = { base: ctx.view, sim, part, phase: 'optional', lm: ctx.legal, submitted: false };
+        s.setActiveToolsByName([
+          ...(canPriv ? ['use_privilege'] : []),
+          ...(ctx.legal.canReplenish ? ['use_replenish'] : []),
+          'skip_optional',
+        ]);
+        await s.prompt(buildPhase1Prompt(ctx, sim));
+        if (opts.verbose) console.log(`\n[LLM 阶段1] ${(slot.part.privileges?.length ?? 0)}枚特权, 补货=${slot.part.replenish === true}`);
+        sim = slot.sim;
+        // 未调用任何工具 = 视为跳过; 调用过但全失败也按已提交的部分算(可能为空 => 跳过)
+      }
+
+      // ---- 阶段2: 强制行动 (合法列表按可选行动后的棋盘重算) ----
+      const lm = legalMoves(sim);
+      if (lm.actions.length === 0) {
+        // 理论不可达(arena 已处理 mustReplenish); 兜底
+        console.warn(`⚠ ${opts.name ?? 'LLM'} 可选行动后无强制行动, 使用兜底`);
+        return fallbackMove(ctx);
+      }
       let lastErr = '';
       for (let attempt = 0; attempt < 3; attempt++) {
-        const prompt = attempt === 0
-          ? buildPrompt(ctx)
-          : `${buildPrompt(ctx)}\n\n上一次失败: ${lastErr}\n请调用 make_move 工具提交合法走法.`;
-        slot = { ctx, move: null };
-        await s.prompt(prompt); // 参数错误已由工具结果即时反馈给模型, 同一 run 内自动修正
-        if (slot.move) return slot.move;
+        slot = { base: ctx.view, sim, part: { ...part }, phase: 'mandatory', lm, submitted: false };
+        s.setActiveToolsByName(['make_move']);
+        await s.prompt(buildPhase2Prompt(ctx, sim, part, lm, lastErr));
+        if (slot.submitted) return slot.part as Move;
         lastRaw = s.getLastAssistantText() ?? '';
         if (opts.verbose) console.log(`\n[LLM 原始回复] ${lastRaw}`);
         lastErr = '没有调用 make_move 工具(或参数始终非法)';
