@@ -27,7 +27,7 @@ bun test             # 引擎规则自检 (Web e2e 见下)
 | `greedy` | 1 层前瞻 + 启发式估值（对随机胜率 ~80%） |
 | `llm[:provider/model]` | 大模型棋手；缺省用 `opencode-go/deepseek-v4.1-flash`（OPENCODE_API_KEY），可显式指定其他模型 |
 
-LLM agent 每回合分两个阶段与模型交互（按时机切换活跃 tool 列表， `session.setActiveToolsByName`）：
+LLM agent 每回合分两个阶段与模型交互（工具全程注册激活， 阶段约束由各工具内部校验并以中文错误提示， 避免 SDK 层 tool-not-found 裸错误）：
 
 1. **可选行动阶段**（仅当有特权或可补货时出现）：工具 `use_privilege`（特权拿格子， 可多次调用）/ `use_replenish`（主动补货）/ `skip_optional`（跳过）；每次调用在模拟状态上即时结算（`applyOption`）， 工具结果返回新棋盘。
 2. **强制行动阶段**：工具 `make_move`， 从按可选行动后棋盘重算的编号合法行动列表中选择。
