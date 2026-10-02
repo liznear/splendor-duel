@@ -6,6 +6,7 @@ import {
 import { randomAgent } from '../agents/random.js';
 import { greedyAgent } from '../agents/greedy.js';
 import { llmAgent } from '../agents/llm.js';
+import { parseMoveText, type PendingAsk } from '../agents/parse.js';
 import type { Agent, TurnContext } from '../agents/agent.js';
 import { actionText } from '../render.js';
 
@@ -17,6 +18,7 @@ interface Game {
   history: GameState[]; // 每步快照(观战回放)
   botPromise?: Promise<void>; // bot 推进中 (去重并发请求)
   botMessage?: { name: string; text: string } | null; // LLM bot 最近一次原始输出
+  pendingSay?: { seat: 0 | 1; ask: PendingAsk } | null; // 文字指令待补充信息(追问后续答用)
 }
 
 const games = new Map<string, Game>();
@@ -231,8 +233,42 @@ async function handle(req: Request): Promise<Response> {
       } catch (err) {
         return json({ error: `操作无效: ${(err as Error).message}` }, 400);
       }
+      g.pendingSay = null; // 局面已变, 此前的追问上下文作废
       g.history.push(g.state);
       return json(statePayload(g, g.humanSeat));
+    }
+
+    // 人机模式: 自然语言走法 (LLM 解析文字 → Move)
+    const mSay = /^\/api\/say\/([\w-]+)$/.exec(path);
+    if (req.method === 'POST' && mSay) {
+      const g = games.get(mSay[1]!);
+      if (!g) return json({ error: '对局不存在' }, 404);
+      if (g.mode !== 'human') return json({ error: '该对局不是人机模式' }, 400);
+      const body = (await req.json()) as { seat: 0 | 1; text: string };
+      const text = (body.text ?? '').trim();
+      if (!text) return json({ error: '请输入指令内容' }, 400);
+      if (g.state.current !== body.seat || g.state.winner !== null || g.state.draw) {
+        return json({ error: '当前不是你的回合' }, 400);
+      }
+      ensurePlayable(g);
+      try {
+        // 续答: 上次解析追问了补充信息且玩家未换指令 => 从半成品继续, 不需要重新描述
+        const ask = g.pendingSay && g.pendingSay.seat === body.seat ? g.pendingSay.ask : undefined;
+        const parsed = await parseMoveText({
+          view: playerView(g.state, body.seat), seat: body.seat, turn: g.state.turnCount, text,
+          ...(ask ? { pending: ask } : {}),
+        });
+        if (!parsed.move) {
+          g.pendingSay = parsed.pending ? { seat: body.seat, ask: parsed.pending } : null;
+          return json({ ok: false, reply: parsed.reply });
+        }
+        g.pendingSay = null;
+        g.state = applyMove(g.state, parsed.move);
+        g.history.push(g.state);
+        return json({ ok: true, say: parsed.reply, ...statePayload(g, g.humanSeat) });
+      } catch (err) {
+        return json({ error: `操作无效: ${(err as Error).message}` }, 400);
+      }
     }
 
     // 人类走法(人机模式)
@@ -251,6 +287,7 @@ async function handle(req: Request): Promise<Response> {
       } catch (err) {
         return json({ error: `走法无效: ${(err as Error).message}` }, 400);
       }
+      g.pendingSay = null; // 走法已提交, 此前的追问上下文作废
       g.history.push(g.state);
       // 立即返回: 人类操作已生效, bot 由前端调 /api/bot 推进
       return json({ ok: true, ...statePayload(g, g.humanSeat) });

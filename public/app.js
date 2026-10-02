@@ -898,6 +898,44 @@ function makeModalDraggable(box) {
   for (const h of box.querySelectorAll('.drag-btn, h3')) h.addEventListener('pointerdown', start);
 }
 
+// ---------------- 文字指挥 (LLM 解析自然语言 → 走法) ----------------
+async function submitSay() {
+  const text = $('#say-input').value.trim();
+  if (!text || !myTurn()) return;
+  const btn = $('#btn-say');
+  btn.disabled = true;
+  $('#say-status').textContent = '🤖 解析中…';
+  $('#say-status').className = 'hint';
+  try {
+    const res = await api(`/api/say/${G.id}`, { seat: G.seat, text });
+    if (!res.ok) { // 解析器向玩家澄清/说明, 局面不变
+      $('#say-status').textContent = `🤖 ${res.reply}`;
+      return;
+    }
+    Object.assign(G, res);
+    ui = freshUi();
+    $('#say-input').value = '';
+    $('#say-status').textContent = `✅ ${res.say ?? '已执行'}`;
+    render();
+    if (res.pending) {
+      $('#say-status').textContent = '';
+      const r2 = await awaitBot(api(`/api/bot/${G.id}`, {}));
+      Object.assign(G, r2);
+      ui = freshUi();
+      render();
+    }
+  } catch (err) {
+    $('#say-status').textContent = `⚠ ${err.message}`;
+    $('#say-status').className = 'error-inline';
+  } finally {
+    btn.disabled = false;
+  }
+}
+$('#btn-say').addEventListener('click', submitSay);
+$('#say-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') submitSay();
+});
+
 // ---------------- Agent 对战控制 ----------------
 $('#btn-step').addEventListener('click', async () => {
   if (G.over) return;

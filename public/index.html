@@ -103,6 +103,11 @@
         <pre id="bot-msg-body" class="hidden"></pre>
       </div>
       <div id="human-turn">
+        <div id="say-bar">
+          <input id="say-input" type="text" placeholder='💬 文字指挥: 如 "买金字塔3号" / "拿B2C2" / "用特权拿D4再买预留1"' autocomplete="off">
+          <button id="btn-say" class="ghost">执行</button>
+          <span id="say-status"></span>
+        </div>
         <div id="pick-bar" class="pick-bar"></div>
         <div id="extras" class="extras"></div>
         <button id="btn-submit" class="primary" disabled>提交走法</button>

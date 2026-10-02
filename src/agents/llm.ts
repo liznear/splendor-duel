@@ -16,21 +16,21 @@ import { Type } from 'typebox';
 
 type PiModule = typeof import('@earendil-works/pi-coding-agent');
 
-const GEM_ZH2CODE: Record<string, Gem> = {
+export const GEM_ZH2CODE: Record<string, Gem> = {
   白: 'white', 白色: 'white', 蓝: 'blue', 蓝色: 'blue', 绿: 'green', 绿色: 'green',
   红: 'red', 红色: 'red', 黑: 'black', 黑色: 'black',
 };
-const NON_GOLD_ZH2CODE: Record<string, NonGold> = {
+export const NON_GOLD_ZH2CODE: Record<string, NonGold> = {
   白: 'white', 白色: 'white', 蓝: 'blue', 蓝色: 'blue', 绿: 'green', 绿色: 'green',
   红: 'red', 红色: 'red', 黑: 'black', 黑色: 'black', 珠: 'pearl', 珍珠: 'pearl',
 };
-const TOKEN_ZH2CODE: Record<string, TokenColor> = { ...NON_GOLD_ZH2CODE, 金: 'gold', 黄金: 'gold' };
+export const TOKEN_ZH2CODE: Record<string, TokenColor> = { ...NON_GOLD_ZH2CODE, 金: 'gold', 黄金: 'gold' };
 
 const ANSI = /\x1b\[[0-9;]*m/g;
-const stripAnsi = (s: string) => s.replace(ANSI, '');
+export const stripAnsi = (s: string) => s.replace(ANSI, '');
 
 /** 棋盘上可用特权拿的格子清单 "A1白 B2珠 ..." */
-function privCellsLine(view: GameState): string {
+export function privCellsLine(view: GameState): string {
   return view.board
     .map((t, i) => (t != null && t !== 'gold' ? `${cellName(i)}${TOKEN_ZH[t]}` : null))
     .filter(Boolean).join(' ');
@@ -110,6 +110,74 @@ interface TurnSlot {
 
 const err = (text: string) => ({ content: [{ type: 'text' as const, text: `错误: ${text}` }], details: {} });
 const ok = (text: string) => ({ content: [{ type: 'text' as const, text }], details: {} });
+
+// ---- 上下文渲染 (llm 棋手与自然语言解析器共用) ----
+
+function renderBoardCompact(view: GameState): string {
+  const rows: string[] = ['    A B C D E'];
+  for (let r = 0; r < 5; r++) {
+    rows.push(
+      `  ${r + 1} ${[0, 1, 2, 3, 4].map((c) => {
+        const t = view.board[r * 5 + c];
+        return t == null ? '·' : TOKEN_ZH[t];
+      }).join(' ')}`,
+    );
+  }
+  return rows.join('\n');
+}
+
+function cardCompact(c: CardDef): string {
+  const cost = Object.entries(c.cost).filter(([, n]) => n > 0).map(([k, n]) => `${TOKEN_ZH[k as TokenColor] ?? k}${n}`).join('');
+  return `L${c.level} ${c.isAssociate ? '百搭' : c.color ? GEM_ZH[c.color as Gem] : '分'}卡 ${c.points}分${c.crowns ? `♛${c.crowns}` : ''}${c.bonus ? `折${c.bonus}` : ''} 费${cost || 0}${c.ability ? ` 【${ABILITY_ZH[c.ability] ?? c.ability}】` : ''}`;
+}
+
+function playerCompact(view: GameState, seat: 0 | 1): string {
+  const p = view.players[seat]!;
+  const tokens = (Object.entries(p.tokens) as [TokenColor, number][])
+    .filter(([, n]) => n > 0).map(([c, n]) => `${TOKEN_ZH[c]}${n}`).join(' ') || '无';
+  const tokenTotal = (Object.values(p.tokens) as number[]).reduce((a, b) => a + b, 0);
+  const bonuses = (Object.entries(p.bonuses) as [Gem, number][])
+    .filter(([, n]) => n > 0).map(([g, n]) => `${GEM_ZH[g]}${n}`).join(' ') || '无';
+  const label = seat === view.current ? '我方(当前行动方)' : '对手';
+  return [
+    `${label}: 分数${p.points}/20 皇冠${p.crowns}/10 特权${p.privileges} token: ${tokens} 共${tokenTotal}/10`,
+    `  折扣: ${bonuses} 单色最高分: ${maxColorPointsOf(p)}/10${p.royals.length ? ` 皇家卡×${p.royals.length}` : ''}`,
+    `  已购卡: ${p.cards.map((c) => `${c.color ? GEM_ZH[c.color] : '分'}${c.def.points}${c.def.crowns ? '♛' + c.def.crowns : ''}`).join(' ') || '无'}`,
+  ].join('\n');
+}
+
+/** 共享局面块(不含行动列表), 供 LLM 棋手两阶段与自然语言解析器复用 */
+export function buildContext(view: GameState, seat: 0 | 1): string {
+  const me = view.players[seat]!;
+  const opp = view.players[1 - seat]!;
+  const lines: string[] = [];
+  lines.push('【棋盘】(坐标 A-E 列 1-5 行)');
+  lines.push(renderBoardCompact(view));
+  lines.push('', '【金字塔】');
+  view.pyramid.forEach((c, i) => c && lines.push(`${i + 1}: ${cardCompact(c)}`));
+  lines.push(`牌库剩余: L1:${view.decks[0]!.length} L2:${view.decks[1]!.length} L3:${view.decks[2]!.length}`);
+  lines.push(`皇家卡(下标从0): ${view.royals.map((r, i) => `${i}:${r.points}分${r.ability ? ABILITY_ZH[r.ability] : ''}`).join(' ') || '无'}`);
+  lines.push(`公共特权池剩余: ${3 - me.privileges - opp.privileges}  袋中token: ${view.bag.length}`);
+  lines.push('', `【我方】\n${playerCompact(view, seat)}`);
+  if (me.reserved.length > 0) lines.push(`  预留: ${me.reserved.map((c) => cardCompact(c)).join(' ; ')}`);
+  lines.push('', `【对手】\n${playerCompact(view, (1 - seat) as 0 | 1)}`);
+  if (opp.reserved.length > 0) {
+    // 明留(金字塔)公开, 盲留(牌库顶)仅数量
+    const open = opp.reserved.filter((c) => c.id !== 'hidden');
+    const blindN = opp.reserved.length - open.length;
+    if (open.length > 0) lines.push(`  对手明留卡: ${open.map((c) => cardCompact(c)).join(' ; ')}`);
+    if (blindN > 0) lines.push(`  对手盲留: ${blindN}张(内容保密)`);
+  }
+  // 威胁提示(5秒习惯自动化)
+  const threats: string[] = [];
+  if (opp.crowns >= 7) threats.push(`对手皇冠 ${opp.crowns}/10, 一张皇冠卡就可能获胜 => 皇冠封锁最优先`);
+  else if (opp.crowns >= 5) threats.push(`对手皇冠 ${opp.crowns}/10, 接近警戒线7`);
+  if (maxColorPointsOf(opp) >= 7) threats.push(`对手单色最高 ${maxColorPointsOf(opp)}/10 分 => 高分卡/百搭卡警惕被其凑满`);
+  if (opp.points >= 15) threats.push(`对手 ${opp.points}/20 分, 一张L3+皇家卡可能一波结束 => 评估其下回合能否获胜`);
+  if (me.points >= 15 || me.crowns >= 8 || maxColorPointsOf(me) >= 8) threats.push(`我方已接近胜利(${me.points}分/${me.crowns}冠/单色${maxColorPointsOf(me)}分), 优先冲终点而非发育`);
+  if (threats.length) lines.push('', `【威胁检测】\n- ${threats.join('\n- ')}`);
+  return lines.join('\n');
+}
 
 export function llmAgent(opts: LlmOptions = {}): Agent {
   let session: Awaited<ReturnType<PiModule['createAgentSession']>>['session'] | null = null;
@@ -383,10 +451,12 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     const { session: s } = await pi.createAgentSession({
       resourceLoader: loader,
       sessionManager: pi.SessionManager.inMemory(),
+      // 代码内固定 thinking 预算, 不读也不改任何配置文件
+      settingsManager: pi.SettingsManager.inMemory({ thinkingBudgets: { medium: 16384 } }),
       tools: ['use_privilege', 'use_replenish', 'skip_optional', 'make_move'], // 全量注册且全程激活; 阶段约束由各工具内部校验
       customTools: [privilegeTool as never, replenishTool as never, skipTool as never, moveTool as never],
       ...(model ? { model: model as never } : {}),
-      ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
+      thinkingLevel: opts.thinkingLevel ?? 'medium',
     });
     session = s;
     if (opts.onThinking) {
@@ -403,73 +473,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     return session;
   }
 
-  // ---- 上下文渲染 ----
-
-  function renderBoardCompact(view: GameState): string {
-    const rows: string[] = ['    A B C D E'];
-    for (let r = 0; r < 5; r++) {
-      rows.push(
-        `  ${r + 1} ${[0, 1, 2, 3, 4].map((c) => {
-          const t = view.board[r * 5 + c];
-          return t == null ? '·' : TOKEN_ZH[t];
-        }).join(' ')}`,
-      );
-    }
-    return rows.join('\n');
-  }
-
-  function cardCompact(c: CardDef): string {
-    const cost = Object.entries(c.cost).filter(([, n]) => n > 0).map(([k, n]) => `${TOKEN_ZH[k as TokenColor] ?? k}${n}`).join('');
-    return `L${c.level} ${c.isAssociate ? '百搭' : c.color ? GEM_ZH[c.color as Gem] : '分'}卡 ${c.points}分${c.crowns ? `♛${c.crowns}` : ''}${c.bonus ? `折${c.bonus}` : ''} 费${cost || 0}${c.ability ? ` 【${ABILITY_ZH[c.ability] ?? c.ability}】` : ''}`;
-  }
-
-  function playerCompact(view: GameState, seat: 0 | 1): string {
-    const p = view.players[seat]!;
-    const tokens = (Object.entries(p.tokens) as [TokenColor, number][])
-      .filter(([, n]) => n > 0).map(([c, n]) => `${TOKEN_ZH[c]}${n}`).join(' ') || '无';
-    const tokenTotal = (Object.values(p.tokens) as number[]).reduce((a, b) => a + b, 0);
-    const bonuses = (Object.entries(p.bonuses) as [Gem, number][])
-      .filter(([, n]) => n > 0).map(([g, n]) => `${GEM_ZH[g]}${n}`).join(' ') || '无';
-    const label = seat === view.current ? '我方(你, 当前行动方)' : '对手';
-    return [
-      `${label}: 分数${p.points}/20 皇冠${p.crowns}/10 特权${p.privileges} token: ${tokens} 共${tokenTotal}/10`,
-      `  折扣: ${bonuses} 单色最高分: ${maxColorPointsOf(p)}/10${p.royals.length ? ` 皇家卡×${p.royals.length}` : ''}`,
-      `  已购卡: ${p.cards.map((c) => `${c.color ? GEM_ZH[c.color] : '分'}${c.def.points}${c.def.crowns ? '♛' + c.def.crowns : ''}`).join(' ') || '无'}`,
-    ].join('\n');
-  }
-
-  /** 共享局面块(不含行动列表), 阶段1/阶段2 复用 */
-  function buildContext(view: GameState, seat: 0 | 1): string {
-    const me = view.players[seat]!;
-    const opp = view.players[1 - seat]!;
-    const lines: string[] = [];
-    lines.push('【棋盘】(坐标 A-E 列 1-5 行)');
-    lines.push(renderBoardCompact(view));
-    lines.push('', '【金字塔】');
-    view.pyramid.forEach((c, i) => c && lines.push(`${i + 1}: ${cardCompact(c)}`));
-    lines.push(`牌库剩余: L1:${view.decks[0]!.length} L2:${view.decks[1]!.length} L3:${view.decks[2]!.length}`);
-    lines.push(`皇家卡(下标从0): ${view.royals.map((r, i) => `${i}:${r.points}分${r.ability ? ABILITY_ZH[r.ability] : ''}`).join(' ') || '无'}`);
-    lines.push(`公共特权池剩余: ${3 - me.privileges - opp.privileges}  袋中token: ${view.bag.length}`);
-    lines.push('', `【我方】\n${playerCompact(view, seat)}`);
-    if (me.reserved.length > 0) lines.push(`  预留: ${me.reserved.map((c) => cardCompact(c)).join(' ; ')}`);
-    lines.push('', `【对手】\n${playerCompact(view, (1 - seat) as 0 | 1)}`);
-    if (opp.reserved.length > 0) {
-      // 明留(金字塔)公开, 盲留(牌库顶)仅数量
-      const open = opp.reserved.filter((c) => c.id !== 'hidden');
-      const blindN = opp.reserved.length - open.length;
-      if (open.length > 0) lines.push(`  对手明留卡: ${open.map((c) => cardCompact(c)).join(' ; ')}`);
-      if (blindN > 0) lines.push(`  对手盲留: ${blindN}张(内容保密)`);
-    }
-    // 威胁提示(5秒习惯自动化)
-    const threats: string[] = [];
-    if (opp.crowns >= 7) threats.push(`对手皇冠 ${opp.crowns}/10, 一张皇冠卡就可能获胜 => 皇冠封锁最优先`);
-    else if (opp.crowns >= 5) threats.push(`对手皇冠 ${opp.crowns}/10, 接近警戒线7`);
-    if (maxColorPointsOf(opp) >= 7) threats.push(`对手单色最高 ${maxColorPointsOf(opp)}/10 分 => 高分卡/百搭卡警惕被其凑满`);
-    if (opp.points >= 15) threats.push(`对手 ${opp.points}/20 分, 一张L3+皇家卡可能一波结束 => 评估其下回合能否获胜`);
-    if (me.points >= 15 || me.crowns >= 8 || maxColorPointsOf(me) >= 8) threats.push(`我方已接近胜利(${me.points}分/${me.crowns}冠/单色${maxColorPointsOf(me)}分), 优先冲终点而非发育`);
-    if (threats.length) lines.push('', `【威胁检测】\n- ${threats.join('\n- ')}`);
-    return lines.join('\n');
-  }
+  // ---- 上下文渲染: 见下方模块级 buildContext (与自然语言解析器共用) ----
 
   function summarizeOptional(part: Partial<Move>, before: GameState): string {
     const parts: string[] = [];
