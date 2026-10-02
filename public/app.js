@@ -264,6 +264,25 @@ $('#btn-start-agents').addEventListener('click', async () => {
 $('#btn-new').addEventListener('click', () => location.reload());
 
 let modalWasShown = false;
+
+/** 等 bot 走完期间轮询 /api/state, 实时刷新 LLM 思考流 */
+async function awaitBot(request) {
+  const poll = setInterval(async () => {
+    try {
+      const s = await api(`/api/state/${G.id}?seat=${G.seat}`);
+      if (s.botMessage && s.botMessage.text !== G.botMessage?.text) {
+        G.botMessage = s.botMessage;
+        renderActionbar();
+      }
+    } catch { /* 轮询失败忽略, 等 bot 请求返回 */ }
+  }, 800);
+  try {
+    return await request;
+  } finally {
+    clearInterval(poll);
+  }
+}
+
 function startGame(payload) {
   G = payload;
   ui = freshUi();
@@ -273,8 +292,7 @@ function startGame(payload) {
   $('#human-controls').classList.toggle('hidden', G.mode !== 'human');
   render();
   if (payload.pending) {
-    $('#thinking').classList.remove('hidden');
-    api(`/api/bot/${G.id}`, {}).then((r) => {
+    awaitBot(api(`/api/bot/${G.id}`, {})).then((r) => {
       Object.assign(G, r);
       ui = freshUi();
       render();
@@ -298,7 +316,12 @@ function renderModals() {
   const root = $('#modal-root'), box = $('#modal-box');
   const show = myTurn() && (ui.phase === 'priv' || ui.phase === 'replenish');
   root.classList.toggle('hidden', !show);
-  if (show && !modalWasShown) { box.style.position = ''; box.style.left = ''; box.style.top = ''; box.style.width = ''; } // 重新打开时归位
+  if (show && !modalWasShown) { // 每次重新打开默认归位左上角, 不挡棋盘
+    box.style.position = 'fixed';
+    box.style.left = '16px';
+    box.style.top = '16px';
+    box.style.width = '';
+  }
   modalWasShown = show;
   if (!show) return;
   box.replaceChildren();
@@ -636,9 +659,13 @@ function renderActionbar() {
   const bm = $('#bot-msg');
   bm.classList.toggle('hidden', !G.botMessage);
   if (G.botMessage) {
+    const body = $('#bot-msg-body');
+    // 流式自动滚底: 仅当用户没有上翻(离底部近)时跟随, 不打断回看
+    const stick = botMsgOpen && body.scrollHeight - body.scrollTop - body.clientHeight < 30;
     $('#bot-msg-toggle').textContent = `🤖 ${G.botMessage.name} 输出 ${botMsgOpen ? '▾' : '▸'}`;
-    $('#bot-msg-body').textContent = G.botMessage.text;
-    $('#bot-msg-body').classList.toggle('hidden', !botMsgOpen);
+    body.textContent = G.botMessage.text;
+    body.classList.toggle('hidden', !botMsgOpen);
+    if (stick) body.scrollTop = body.scrollHeight;
   }
   if (G.mode === 'agents') {
     $('#turn-indicator').textContent = G.over ? '对局结束' : `第 ${G.view.turnCount + 1} 回合 · 轮到 ${G.names[G.view.current]}`;
@@ -825,15 +852,13 @@ $('#btn-submit').addEventListener('click', async () => {
   }
   $('#move-error').textContent = '';
   $('#human-turn').classList.add('hidden');
-  $('#thinking').classList.remove('hidden');
   try {
     const res = await api(`/api/move/${G.id}`, { seat: G.seat, move });
     Object.assign(G, res);
     ui = freshUi();
     render(); // 先立刻展示己方操作结果
     if (res.pending) {
-      $('#thinking').classList.remove('hidden');
-      const r2 = await api(`/api/bot/${G.id}`, {});
+      const r2 = await awaitBot(api(`/api/bot/${G.id}`, {}));
       Object.assign(G, r2);
       ui = freshUi();
       render();

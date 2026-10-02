@@ -37,6 +37,11 @@ function privCellsLine(view: GameState): string {
 }
 
 const SYSTEM_PROMPT = `你是 Splendor Duel(璀璨宝石对决)棋手, 目标是赢下双人对抗.
+思考与回复一律用中文.
+
+== 身份指代(重要) ==
+局面报告里【我方】永远指你自己(当前行动方); 【对手】指与你对弈的另一个人.
+其中的玩家名字只是界面标签(可能是 LLM/你/任意字符串), 与"你"的指代无关, 不要被名字干扰.
 
 == 规则摘要 ==
 - 棋盘 5x5 随机放 25 个 token: 白/蓝/绿/红/黑各4, 珍珠2, 黄金3. 花掉的 token 进袋, 补货时洗匀回填.
@@ -82,6 +87,8 @@ export interface LlmOptions {
   model?: string; // "provider/id"; 缺省用 opencode-go/deepseek-v4.1-flash, 再退回会话默认
   thinkingLevel?: 'off' | 'low' | 'medium' | 'high';
   verbose?: boolean; // 打印模型原始回复(调试)
+  /** 流式回调: 本回合模型 thinking/文本增量的累积快照(每回合重置), 供界面实时展示 */
+  onThinking?: (snapshot: string) => void;
 }
 
 const DEFAULT_MODEL = 'opencode-go/deepseek-v4.1-flash';
@@ -106,8 +113,10 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
   let useModel = opts.model;
   let slot: TurnSlot | null = null;
   let lastRaw = '';
+  let liveRaw = ''; // 流式累积: onThinking 快照用
 
   // 汇总 prompt 期间新增的 assistant 消息(thinking/文本/工具调用), 供界面展示; 模型思考在 content 的 thinking 块里
+  const tidy = (s: string) => s.replace(/\n{2,}/g, '\n').trim(); // 压掉连续空行
   function collectReply(s: NonNullable<typeof session>, from: number): string {
     const parts: string[] = [];
     for (const m of s.messages.slice(from)) {
@@ -118,7 +127,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
         else if (c.type === 'toolCall') parts.push(`[调用 ${c.name} ${JSON.stringify(c.arguments)}]`);
       }
     }
-    return parts.join('\n\n');
+    return tidy(parts.join('\n'));
   }
 
   // ---- 阶段1 工具: 用特权 (可在一次 run 内多次调用, 每次即时结算并展示新棋盘) ----
@@ -370,6 +379,17 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
       ...(opts.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
     });
     session = s;
+    if (opts.onThinking) {
+      // 流式: 订阅 thinking/文本增量, 回调给宿主实时展示(工具调用仍由 collectReply 事后汇总)
+      s.subscribe((event) => {
+        if (event.type !== 'message_update') return;
+        const e = event.assistantMessageEvent;
+        if ((e.type === 'thinking_delta' || e.type === 'text_delta') && e.delta) {
+          liveRaw += e.delta;
+          opts.onThinking?.(tidy(liveRaw));
+        }
+      });
+    }
     return session;
   }
 
@@ -399,9 +419,9 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
       .filter(([, n]) => n > 0).map(([c, n]) => `${TOKEN_ZH[c]}${n}`).join(' ') || '无';
     const bonuses = (Object.entries(p.bonuses) as [Gem, number][])
       .filter(([, n]) => n > 0).map(([g, n]) => `${GEM_ZH[g]}${n}`).join(' ') || '无';
-    const label = seat === view.current ? '(当前行动方)' : '';
+    const label = seat === view.current ? '我方(你, 当前行动方)' : '对手';
     return [
-      `${p.name}${label}: 分数${p.points}/20 皇冠${p.crowns}/10 特权${p.privileges} token: ${tokens}`,
+      `${label}: 分数${p.points}/20 皇冠${p.crowns}/10 特权${p.privileges} token: ${tokens}`,
       `  折扣: ${bonuses} 单色最高分: ${maxColorPointsOf(p)}/10${p.royals.length ? ` 皇家卡×${p.royals.length}` : ''}`,
       `  已购卡: ${p.cards.map((c) => `${c.color ? GEM_ZH[c.color] : '分'}${c.def.points}${c.def.crowns ? '♛' + c.def.crowns : ''}`).join(' ') || '无'}`,
     ].join('\n');
@@ -491,6 +511,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     get lastRaw() { return lastRaw; },
     async chooseMove(ctx: TurnContext): Promise<Move> {
       const s = await ensureSession();
+      liveRaw = ''; // 重置本回合流式缓冲
       const msgFrom = s.messages.length; // 本回合消息起点, 收集 thinking 用
       const me = ctx.view.players[ctx.seat]!;
       const canPriv = me.privileges > 0 && ctx.legal.privilegeCells.length > 0;

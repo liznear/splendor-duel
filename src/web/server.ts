@@ -22,13 +22,20 @@ interface Game {
 const games = new Map<string, Game>();
 let gameSeq = 0;
 
-function makeBot(spec: string): Agent {
+function makeBot(spec: string, onThinking?: (name: string, text: string) => void): Agent {
   const [kind, ...rest] = spec.split(':');
   const arg = rest.join(':');
   switch (kind) {
     case 'random': return randomAgent();
     case 'greedy': return greedyAgent();
-    case 'llm': return llmAgent({ model: arg || undefined, name: arg ? `LLM(${arg.split('/').pop()})` : 'LLM' });
+    case 'llm': {
+      const agent = llmAgent({
+        model: arg || undefined,
+        name: arg ? `LLM(${arg.split('/').pop()})` : 'LLM',
+        ...(onThinking ? { onThinking: (text: string) => onThinking(agent.name, text) } : {}),
+      });
+      return agent;
+    }
     default: throw new Error(`未知 agent: ${kind}`);
   }
 }
@@ -177,17 +184,22 @@ async function handle(req: Request): Promise<Response> {
         mode: 'human' | 'agents'; p1?: string; p2?: string; humanSeat?: 0 | 1; seed?: number;
       };
       const id = `g${++gameSeq}`;
+      // 流式展示: LLM 思考过程中实时写入 botMessage, 前端轮询 /api/state 拉取
+      const onBotThinking = (name: string, text: string) => {
+        const gg = games.get(id);
+        if (gg) gg.botMessage = { name, text };
+      };
       let g: Game;
       if (body.mode === 'human') {
         const humanSeat = body.humanSeat ?? 1;
         const botSpec = humanSeat === 0 ? (body.p2 ?? 'greedy') : (body.p1 ?? 'greedy');
-        const bot = makeBot(botSpec);
+        const bot = makeBot(botSpec, onBotThinking);
         const agents: [Agent, Agent] = humanSeat === 0 ? [{ name: '你' } as Agent, bot] : [bot, { name: '你' } as Agent];
         g = { state: newGame({ names: humanSeat === 0 ? ['你', bot.name] : [bot.name, '你'], firstSeat: 0, seed: body.seed }), agents, mode: 'human', humanSeat, history: [] };
         // bot 先手时立即返回 (pending=true), 前端调 /api/bot 等待, 避免长时间无反馈
       } else {
-        const a1 = makeBot(body.p1 ?? 'greedy');
-        const a2 = makeBot(body.p2 ?? 'random');
+        const a1 = makeBot(body.p1 ?? 'greedy', onBotThinking);
+        const a2 = makeBot(body.p2 ?? 'random', onBotThinking);
         g = { state: newGame({ names: [a1.name, a2.name], firstSeat: 0, seed: body.seed }), agents: [a1, a2], mode: 'agents', humanSeat: 0, history: [] };
       }
       games.set(id, g);
