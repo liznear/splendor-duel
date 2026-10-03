@@ -50,14 +50,14 @@ function cardTitle(def, chosenColor) {
 
 /** 图片实体卡: /cards/{id}.png, 槽号 + 悬停/选中环 */
 function cardEl(c, opts = {}) {
-  const card = el('div', `card img-card${opts.clickable ? ' clickable' : ''}${opts.selected ? ' selected' : ''}`);
+  const card = el('div', `card img-card${opts.clickable ? ' clickable' : ''}${opts.selected ? ' selected' : ''}${opts.affordable ? ' affordable' : ''}`);
   if (opts.slot != null) card.append(span('slot', String(opts.slot + 1)));
   const img = el('img');
   img.src = `/cards/${c.id}.png`;
   img.alt = cardTitle(c);
   img.loading = 'lazy';
   card.append(img);
-  card.title = cardTitle(c);
+  card.title = opts.affordable ? `${cardTitle(c)} · 本回合可购买` : cardTitle(c);
   return card;
 }
 
@@ -72,13 +72,13 @@ function cardBack(slot) {
 /** 小卡: 图片缩略 (已购/预留), def.id 为 hidden 时显示卡背 */
 function miniCard(def, chosenColor, showBig, opts = {}) {
   if (def.id === 'hidden') return miniBack();
-  const m = el('div', `mini${showBig ? ' mc-cost' : ''}${opts.clickable ? ' clickable' : ''}${opts.selected ? ' selected' : ''}`);
+  const m = el('div', `mini${showBig ? ' mc-cost' : ''}${opts.clickable ? ' clickable' : ''}${opts.selected ? ' selected' : ''}${opts.affordable ? ' affordable' : ''}`);
   const img = el('img');
   img.src = `/cards/${def.id}.png`;
   img.alt = cardTitle(def, chosenColor);
   img.loading = 'lazy';
   m.append(img);
-  m.title = cardTitle(def, chosenColor);
+  m.title = opts.affordable ? `${cardTitle(def, chosenColor)} · 本回合可购买` : cardTitle(def, chosenColor);
   return m;
 }
 /** 盲留卡背 */
@@ -150,8 +150,12 @@ const goldCells = () => G.view.board.map((t, i) => (t === 'gold' ? i : -1)).filt
 
 /** 特权/补货是低频可选行动: 不自动弹窗, 由侧栏按钮按需打开 */
 function freshUi() {
-  return { pick: null, action: null, privileges: [], phase: 'main', takeSamePick: null, extras: {}, hint: '', extrasOpen: false, showBotMove: false };
+  return { pick: null, action: null, privileges: [], phase: 'main', takeSamePick: null, extras: {}, hint: '', extrasOpen: false, showBotMove: false, noticeSeen: null };
 }
+/** 被迫补货提示的去重键: 文本可能跨回合相同, 拼上回合号 */
+const noticeKey = () => `${G.turn}:${G.notice}`;
+/** 有未读的被迫补货提示 (仅自己被迫时弹 modal, bot 被迫只走提示条) */
+const noticePending = () => G.mode === 'human' && !G.over && G.notice && ui.noticeSeen !== noticeKey();
 /** bot 走完后展示其操作回顾 (需要关闭才回到棋盘) */
 function revealBotMove() {
   ui = freshUi();
@@ -410,7 +414,10 @@ function renderModals() {
   const root = $('#modal-root'), box = $('#modal-box');
   let show = false;
   box.replaceChildren();
-  if (myTurn() && (ui.phase === 'priv' || ui.phase === 'replenish')) {
+  if (noticePending() && G.noticeSeat === G.seat) {
+    renderNoticeModal(box);
+    show = true;
+  } else if (myTurn() && (ui.phase === 'priv' || ui.phase === 'replenish')) {
     renderPhaseModal(box);
     show = true;
   } else if (myTurn() && ui.pick && ui.pick.t !== 'take') {
@@ -437,7 +444,8 @@ function modalHead(box, title) {
 }
 
 function closeModal() {
-  if (ui.phase === 'priv') { ui.privileges = []; ui.phase = 'main'; }
+  if (noticePending()) ui.noticeSeen = noticeKey();
+  else if (ui.phase === 'priv') { ui.privileges = []; ui.phase = 'main'; }
   else if (ui.phase === 'replenish') ui.phase = 'main';
   else if (ui.showBotMove) ui.showBotMove = false;
   else if (ui.pick) { ui.pick = null; ui.hint = ''; }
@@ -665,6 +673,10 @@ function renderPyramid() {
   });
   pyr.append(deckRow);
 
+  // 本回合买得起的金字塔卡 (legal 表中的 buy 来源) 标绿框
+  const afford = new Set((G.legal?.actions ?? [])
+    .filter((a) => a.action.kind === 'buy' && a.action.from.kind === 'pyramid')
+    .map((a) => a.action.from.slot));
   const rows = [[0, 1, 2], [3, 4, 5, 6], [7, 8, 9, 10, 11]];
   for (const row of rows) {
     const r = el('div', 'pyr-row');
@@ -672,7 +684,7 @@ function renderPyramid() {
       const c = G.view.pyramid[s];
       if (!c) { r.append(cardBack(s)); continue; }
       const selected = ui.pick?.t === 'card' && ui.pick.slot === s;
-      const card = cardEl(c, { slot: s, clickable: myTurn(), selected });
+      const card = cardEl(c, { slot: s, clickable: myTurn(), selected, affordable: afford.has(s) });
       if (myTurn()) card.addEventListener('click', () => pickPyramidCard(s));
       r.append(card);
     }
@@ -790,11 +802,15 @@ function renderPlayers() {
     reserved.append(el('span', 'lab', '预留:'));
     if (p.reserved.length === 0) reserved.append(el('span', 'hint', '无'));
     else if (mine || G.mode === 'agents') {
+      // 本回合买得起的预留卡标绿框 (与金字塔一致)
+      const affordRes = mine && myTurn()
+        ? new Set((G.legal?.actions ?? []).filter((a) => a.action.kind === 'buy' && a.action.from.kind === 'reserved').map((a) => a.action.from.index))
+        : new Set();
       const minis = el('div', 'minicards');
       p.reserved.forEach((c, index) => {
         if (c.id === 'hidden') { minis.append(miniBack()); return; }
         const selected = ui.pick?.t === 'buyRes' && ui.pick.index === index;
-        const m = miniCard(c, null, true, { clickable: mine && myTurn(), selected });
+        const m = miniCard(c, null, true, { clickable: mine && myTurn(), selected, affordable: affordRes.has(index) });
         if (mine && myTurn()) m.addEventListener('click', () => pickReservedCard(index));
         minis.append(m);
       });
@@ -867,6 +883,10 @@ function discardExcess() {
 
 function renderActionbar() {
   const turn = myTurn();
+  // 被迫补货提示: 展示至人类提交走法 (服务端清空)
+  const notice = $('#notice');
+  notice.classList.toggle('hidden', !G.notice);
+  notice.textContent = G.notice ?? '';
   $('#human-turn').classList.toggle('hidden', !turn);
   // LLM bot 原始输出: 有则显示 toggle (思考中/回合中均可展开)
   const bm = $('#bot-msg');
@@ -1022,6 +1042,20 @@ function refreshExtrasConfirm(excess) {
     ok.disabled = pending.length > 0;
     ok.textContent = pending.length > 0 ? `还差 ${pending.length} 项…` : '确认提交 ✓';
   }
+}
+
+/** 被迫补货弹窗: 解释引擎自动补货与特权归属 (避免误以为 bot 补货/特权丢失) */
+function renderNoticeModal(box) {
+  modalHead(box, '🔄 被迫补货');
+  const body = el('div', 'notice-body');
+  body.append(el('p', 'notice-text', G.notice.replace(/^🔄 /, '')));
+  body.append(el('p', 'hint', '规则: 无强制行动可走时自动补充棋盘, 对手获得 1 特权。'));
+  box.append(body);
+  const row = el('div', 'modal-actions');
+  const ok = el('button', 'primary big', '知道了 ▸');
+  ok.addEventListener('click', () => { ui.noticeSeen = noticeKey(); render(); });
+  row.append(ok);
+  box.append(row);
 }
 
 /** bot 操作回顾: 图示对手最近一轮做了什么 */

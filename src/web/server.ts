@@ -39,6 +39,8 @@ interface Game {
   botPromise?: Promise<void>; // bot 推进中 (去重并发请求)
   botMessage?: { name: string; text: string } | null; // LLM bot 最近一次原始输出
   moveFeed: MoveVisual[]; // 自人类上次走法以来的 bot 操作快照
+  notice?: string | null; // 最近一次被迫补货提示 (人类走法提交时清空)
+  noticeSeat?: 0 | 1 | null; // 被迫补货者座位 (前端仅自己被迫时弹 modal)
   recorder: GameRecorder; // 对局级会话记录(sessions/)
 }
 
@@ -103,6 +105,8 @@ function statePayload(g: Game, seat: 0 | 1) {
     legal: st.winner === null && !st.draw && st.current === seat ? enrichedLegal(st, seat) : null,
     names: [st.players[0].name, st.players[1].name],
     recentMoves: g.moveFeed,
+    notice: g.notice ?? null,
+    noticeSeat: g.noticeSeat ?? null,
     botMessage: g.botMessage ?? null,
     pending: g.mode === 'human' && st.winner === null && !st.draw && st.current !== g.humanSeat, // bot 待行动, 前端需调 /api/bot
   };
@@ -131,6 +135,8 @@ async function runBotTurn(g: Game): Promise<boolean> {
   if (lm.mustReplenish) {
     g.recorder.replenish();
     st = applyReplenish(st);
+    g.notice = `🔄 ${st.log.at(-1)}`;
+    g.noticeSeat = st.current;
     lm = legalMoves(st);
     if (lm.actions.length === 0) {
       g.state = st;
@@ -219,6 +225,8 @@ function ensurePlayable(g: Game): void {
     if (!legalMoves(g.state).mustReplenish) return;
     g.recorder.replenish();
     g.state = applyReplenish(g.state);
+    g.notice = `🔄 ${g.state.log.at(-1)}`;
+    g.noticeSeat = g.state.current; // applyReplenish 不换 current, 即被迫者
     g.history.push(g.state);
     if (++guard > 100) return;
   }
@@ -327,6 +335,8 @@ async function handle(req: Request): Promise<Response> {
       const body = (await req.json()) as { file: string; mode?: 'human' | 'agents'; p1?: string; p2?: string; humanSeat?: 0 | 1 };
       const s = readSession(body.file);
       const events = s.events.filter((e) => e.t !== 'result');
+      // 展平续局链: 源文件若是续局, 其内嵌前缀也要带上, 新文件才能自包含可重放
+      const prefix = [...(s.meta.resume?.events ?? []), ...events];
       const state = replayGame(s.meta, events);
       const id = `g${++gameSeq}`;
       const onBotThinking = (name: string, text: string) => {
@@ -348,7 +358,7 @@ async function handle(req: Request): Promise<Response> {
         const specs: [string, string] = humanSeat === 0 ? ['human', botSpec] : [botSpec, 'human'];
         g = {
           state, agents, mode, humanSeat, history: [state], moveFeed: [],
-          recorder: new GameRecorder({ seed: s.meta.seed, names: state.players.map((p) => p.name) as [string, string], specs, mode, firstSeat: s.meta.firstSeat, humanSeat, resumedFrom: basename(s.path), resume: { seed: s.meta.seed, firstSeat: s.meta.firstSeat, events } }),
+          recorder: new GameRecorder({ seed: s.meta.seed, names: state.players.map((p) => p.name) as [string, string], specs, mode, firstSeat: s.meta.firstSeat, humanSeat, resumedFrom: basename(s.path), resume: { seed: s.meta.seed, firstSeat: s.meta.firstSeat, events: prefix } }),
         };
       } else {
         const a1 = makeBot(body.p1 ?? metaSpec(0, 'greedy'), onBotThinking);
@@ -356,10 +366,11 @@ async function handle(req: Request): Promise<Response> {
         const specs: [string, string] = [body.p1 ?? metaSpec(0, 'greedy'), body.p2 ?? metaSpec(1, 'random')];
         g = {
           state, agents: [a1, a2], mode, humanSeat: 0, history: [state], moveFeed: [],
-          recorder: new GameRecorder({ seed: s.meta.seed, names: state.players.map((p) => p.name) as [string, string], specs, mode, firstSeat: s.meta.firstSeat, resumedFrom: basename(s.path), resume: { seed: s.meta.seed, firstSeat: s.meta.firstSeat, events } }),
+          recorder: new GameRecorder({ seed: s.meta.seed, names: state.players.map((p) => p.name) as [string, string], specs, mode, firstSeat: s.meta.firstSeat, resumedFrom: basename(s.path), resume: { seed: s.meta.seed, firstSeat: s.meta.firstSeat, events: prefix } }),
         };
       }
       games.set(id, g);
+      if (g.mode === 'human') ensurePlayable(g); // 重放终点可能正好卡在无强制行动 (如额外回合后)
       return json({ id, mode: g.mode, humanSeat: g.humanSeat, resumedFile: basename(s.path), file: basename(g.recorder.path), ...statePayload(g, g.mode === 'human' ? g.humanSeat : 0) });
     }
 
@@ -389,6 +400,7 @@ async function handle(req: Request): Promise<Response> {
       } catch (err) {
         return json({ error: `操作无效: ${(err as Error).message}` }, 400);
       }
+      ensurePlayable(g); // 特权拿完可能耗尽最后的强制行动
       g.history.push(g.state);
       return json(statePayload(g, g.humanSeat));
     }
@@ -411,6 +423,8 @@ async function handle(req: Request): Promise<Response> {
         return json({ error: `走法无效: ${(err as Error).message}` }, 400);
       }
       g.moveFeed = []; // 清空 bot 操作回顾, 下次轮到人类时重新收集
+      g.notice = null; // 被迫补货提示只在本回合展示
+      ensurePlayable(g); // 额外回合 + 棋盘空等场景: 走完后可能无强制行动, 需被迫补货
       g.history.push(g.state);
       // 立即返回: 人类操作已生效, bot 由前端调 /api/bot 推进
       return json({ ok: true, ...statePayload(g, g.humanSeat) });

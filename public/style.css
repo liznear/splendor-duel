@@ -36,6 +36,7 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin: 14px; }
 .hidden { display: none !important; }
 .error { color: var(--gem-red); min-height: 18px; margin-top: 6px; font-size: 13px; }
+.notice { margin: 0 0 8px; padding: 8px 12px; background: rgba(201, 154, 30, .08); border: 1px solid var(--brass-hi); border-radius: 8px; color: var(--brass-ink); font-size: 13px; }
 .error-inline { color: var(--gem-red); font-size: 12.5px; }
 .ok-inline { color: var(--gem-green); font-size: 12.5px; font-weight: 600; }
 .hint { color: var(--dim); font-size: 12.5px; }
@@ -61,6 +62,8 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 .card.clickable { cursor: pointer; }
 .card.clickable:hover { box-shadow: 0 0 0 2px var(--brass-hi), var(--shadow); }
 .card.selected, .mini.selected { box-shadow: 0 0 0 2px var(--brass-hi), var(--shadow); }
+.card.img-card.affordable { border: 2px solid var(--gem-green); box-shadow: 0 0 0 1px rgba(39, 165, 108, .2), var(--shadow); }
+.card.img-card.affordable .slot { background: var(--gem-green); }
 .card.back { background: linear-gradient(175deg, #33302b, #26241f); border: 1px solid #44403a; color: #8d887c; align-items: center; justify-content: center; aspect-ratio: 2 / 3; display: flex; }
 .card.back .q { font-family: var(--serif); font-size: 26px; color: #7c776b; }
 
@@ -122,6 +125,9 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 .mini.rroyal { width: 44px; }
 .mini.clickable { cursor: pointer; }
 .mini.clickable:hover { box-shadow: 0 0 0 2px var(--brass-hi); }
+.mini.affordable { box-shadow: 0 0 0 2px var(--gem-green); }
+.notice-body { padding: 4px 2px 8px; }
+.notice-body .notice-text { margin: 0 0 8px; font-size: 15px; font-weight: 700; }
 
 /* ---------- 行动区 ---------- */
 #actionbar { position: sticky; bottom: 12px; background: var(--panel); box-shadow: 0 6px 24px rgba(38, 34, 26, .12); }
