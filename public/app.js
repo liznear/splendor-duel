@@ -1,5 +1,6 @@
 // 前端主逻辑 (DOM API 构建, 无 innerHTML)
 // 交互模型: 直接点击棋盘格/卡片构建走法, 与 legalMoves 匹配后提交
+import { previewTokens, excessOf } from './preview.js';
 const $ = (s) => document.querySelector(s);
 const TZH = { white: '白', blue: '蓝', green: '绿', red: '红', black: '黑', pearl: '珠', gold: '金' };
 const TCSS = { white: 't-white', blue: 't-blue', green: 't-green', red: 't-red', black: 't-black', pearl: 't-pearl', gold: 't-gold' };
@@ -149,7 +150,7 @@ const goldCells = () => G.view.board.map((t, i) => (t === 'gold' ? i : -1)).filt
 
 /** 特权/补货是低频可选行动: 不自动弹窗, 由侧栏按钮按需打开 */
 function freshUi() {
-  return { pick: null, action: null, privileges: [], phase: 'main', takeSamePick: null, extras: {}, hint: '', discardExcess: -1, extrasOpen: false, showBotMove: false };
+  return { pick: null, action: null, privileges: [], phase: 'main', takeSamePick: null, extras: {}, hint: '', extrasOpen: false, showBotMove: false };
 }
 /** bot 走完后展示其操作回顾 (需要关闭才回到棋盘) */
 function revealBotMove() {
@@ -831,25 +832,12 @@ function royalNeeded() {
   const cross = (me.crowns < 3 && me.crowns + c.crowns >= 3) || (me.crowns < 6 && me.crowns + c.crowns >= 6);
   return cross && G.view.royals.length > 0;
 }
-function discardExcess() {
-  const me = G.view.players[G.seat];
-  const held = Object.values(me.tokens).reduce((s, n) => s + n, 0); // 特权 token 已即时入账
-  const a = ui.action?.action;
-  // ponytail: 购买(支付+拿同色/偷取)后仍超 10 的罕见组合不预测, 交引擎默认贪心弃置
-  const gain = a?.kind === 'take' ? a.cells.length : a?.kind === 'reserve' ? 1 : 0;
-  return Math.max(0, held + gain - 10);
+// 结算后手牌预演: 判超 10 发生在支付/拿取之后, 弃置选项含刚拿到的 token
+function myPreviewTokens() {
+  return previewTokens(G.view.players[G.seat], G.view.players[1 - G.seat], G.view.board, ui.action?.action, actionCard(), ui.extras);
 }
-// 预填与引擎一致的默认弃置方案: 先宝石, 再珍珠, 最后黄金
-function defaultDiscard(excess) {
-  const me = G.view.players[G.seat];
-  const d = {};
-  let left = excess;
-  for (const t of ['black', 'red', 'green', 'blue', 'white', 'pearl', 'gold']) {
-    const n = Math.min(left, me.tokens[t]);
-    if (n > 0) d[t] = n;
-    left -= n;
-  }
-  return d;
+function discardExcess() {
+  return excessOf(myPreviewTokens());
 }
 
 function renderActionbar() {
@@ -966,15 +954,12 @@ function renderExtrasModal(box) {
   }
   const excess = discardExcess();
   if (excess > 0) {
-    if (ui.discardExcess !== excess) {
-      ui.extras.discard = defaultDiscard(excess);
-      ui.discardExcess = excess;
-    }
+    const after = myPreviewTokens(); // 结算后持有, 输入上限按它算
     const div = el('div', 'row');
     div.append(el('b', '', `token 将超 10, 弃置 ${excess} 枚:`));
-    ALL_COLORS.filter((t) => me.tokens[t] > 0).forEach((t) => {
+    ALL_COLORS.filter((t) => after[t] > 0).forEach((t) => {
       const inp = document.createElement('input');
-      inp.type = 'number'; inp.min = '0'; inp.max = String(me.tokens[t]);
+      inp.type = 'number'; inp.min = '0'; inp.max = String(after[t]);
       inp.value = ui.extras.discard[t] ?? 0;
       inp.addEventListener('input', () => {
         ui.extras.discard[t] = Number(inp.value || 0);
