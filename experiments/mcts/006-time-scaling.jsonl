@@ -1,0 +1,13 @@
+{"game":1,"seed":20600000,"seat":0,"winner":"baseline","turns":78,"privilegeTokens":2}
+{"game":2,"seed":20600000,"seat":1,"winner":"candidate","turns":75,"privilegeTokens":4}
+{"game":3,"seed":20607919,"seat":0,"winner":"candidate","turns":66,"privilegeTokens":4}
+{"game":4,"seed":20607919,"seat":1,"winner":"candidate","turns":78,"privilegeTokens":6}
+{"game":5,"seed":20615838,"seat":0,"winner":"candidate","turns":82,"privilegeTokens":4}
+{"game":6,"seed":20615838,"seat":1,"winner":"candidate","turns":79,"privilegeTokens":6}
+{"game":7,"seed":20623757,"seat":0,"winner":"baseline","turns":72,"privilegeTokens":1}
+{"game":8,"seed":20623757,"seat":1,"winner":"candidate","turns":79,"privilegeTokens":4}
+{"game":9,"seed":20631676,"seat":0,"winner":"baseline","turns":74,"privilegeTokens":2}
+{"game":10,"seed":20631676,"seat":1,"winner":"candidate","turns":78,"privilegeTokens":4}
+{"game":11,"seed":20639595,"seat":0,"winner":"baseline","turns":85,"privilegeTokens":4}
+{"game":12,"seed":20639595,"seat":1,"winner":"candidate","turns":65,"privilegeTokens":3}
+{"summary":true,"baseline":"mcts","options":{"timeMs":240,"seed":7},"baselineOptions":{"timeMs":60,"seed":7},"maxTurns":180,"games":12,"wins":[8,4],"draws":0,"cappedDraws":0,"illegal":0,"privilegeTokens":44,"moves":453,"baselineMoves":470,"playoutsPerMove":3936,"baselinePlayoutsPerMove":911,"msPerMove":221,"baselineMsPerMove":56,"playoutsPerSecond":17792}

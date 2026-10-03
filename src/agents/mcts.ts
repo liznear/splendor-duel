@@ -9,7 +9,8 @@
 // 3. 贪心 rollout(截断候选集): 对全部强制行动算静态启发分(与 ab.ts 着法排序同源:
 //    买入>拿取>预留, 立即取胜巨额加成), 加随机抖动取 argmax。
 //    不逐动作 applyMove+估值(方案实测引擎克隆下 7-9 局/s, 太贵)。
-// 4. RAVE 未实现(方案标注可选)。特权/自愿补货不进树, root 用引擎 1 层修正(同 ab v1 简化)。
+// 4. 特权按卡牌缺口生成有界组合, 与主行动一起进树; rollout 也考虑特权解锁购买。
+//    RAVE 未实现; 自愿补货仍由 root 引擎 1 层修正。
 //
 // 公平性红线(与 ab.ts 一致, 写死在此):
 // - 搜索只用 ctx.view / ctx.legal。对手盲留(id='hidden', 0 费恒可买)视为 0 战力:
@@ -508,7 +509,8 @@ function staticSim(s: Sim, v: number): number {
 // ---------------------------------------------------------------- MCTS
 
 interface MChild {
-  v: number; // 编码行动
+  v: number; // 编码主行动
+  privileges?: number[]; // 主行动前拿取
   node: MNode | null;
   N: number;
   W: number; // root 视角累计回报
@@ -525,6 +527,48 @@ interface MNode {
 const SCRATCH_A = new Int32Array(512); // enumActions 暂存(单线程内顺序复用)
 const SCRATCH_B = new Int32Array(512);
 
+/** 特权组合只补齐可见卡的购买缺口, 黄金覆盖剩余缺口, 不强迫花完。
+ * ponytail: 每色取扫描序最前格, 若空间阻断成为瓶颈再扩展同色位置组合。 */
+function privilegePlans(s: Sim): { v: number; cells: number[] }[] {
+  const who = s.current, budget = s.privileges[who]!;
+  if (budget === 0) return [];
+  const plans: { v: number; cells: number[] }[] = [];
+  for (let i = 0; i < 12 + s.reserved[who]!.length; i++) {
+    const card = i < 12 ? s.pyramid[i] : s.reserved[who]![i - 12];
+    if (!card) continue;
+    const sc = simCard(card), t = s.tokens[who]!, b = s.bonuses[who]!;
+    if (sc.isAssociate && defaultColorSim(s, who) < 0) continue;
+    const gaps = [Math.max(0, sc.cost[0]! - t[PEARL]!)];
+    for (let g = 0; g < 5; g++) gaps.push(Math.max(0, sc.cost[g + 1]! - b[g]! - t[g]!));
+    let need = gaps.reduce((a, v) => a + v, 0) - t[GOLD]!;
+    if (need <= 0 || need > budget) continue;
+    const cells: number[] = [];
+    for (let g = 0; g < 6 && need > 0 && cells.length < budget; g++) {
+      const color = g === 0 ? PEARL : g - 1;
+      for (let cell = 0; cell < 25 && gaps[g]! > 0 && need > 0 && cells.length < budget; cell++) {
+        if (s.board[cell] !== color) continue;
+        cells.push(cell);
+        gaps[g]!--;
+        need--;
+      }
+    }
+    if (need === 0) {
+      const v = i < 12 ? 2 | (i << 3) : 2 | (1 << 2) | ((i - 12) << 3);
+      plans.push({ v, cells });
+    }
+  }
+  return plans;
+}
+
+/** 主行动前结算特权, 不换玩家、不触发弃置/皇冠/额外回合。 */
+export function takePrivilegesSim(s: Sim, cells: number[]): void {
+  for (const cell of cells) {
+    s.tokens[s.current]![s.board[cell]!]!++;
+    s.board[cell] = EMPTY;
+    s.privileges[s.current]!--;
+  }
+}
+
 function expandNode(node: MNode): void {
   const n = enumActions(node.sim, SCRATCH_A);
   const ch: MChild[] = [];
@@ -532,12 +576,16 @@ function expandNode(node: MNode): void {
     const v = SCRATCH_A[i]!;
     ch.push({ v, node: null, N: 0, W: 0, prior: staticSim(node.sim, v) });
   }
+  for (const { v, cells } of privilegePlans(node.sim)) {
+    ch.push({ v, privileges: cells, node: null, N: 0, W: 0, prior: staticSim(node.sim, v) });
+  }
   ch.sort((a, b) => b.prior - a.prior); // 先验降序: 未访问子节点按此序首演
   node.children = ch;
 }
 
 function expandChild(node: MNode, ch: MChild, rootSeat: number): MNode {
   const sim = copySim(node.sim);
+  if (ch.privileges) takePrivilegesSim(sim, ch.privileges);
   makeSim(sim, ch.v);
   const nn: MNode = { sim, n: 0, children: null, terminal: -1 };
   if (sim.winner >= 0) nn.terminal = sim.winner === rootSeat ? 1 : 0;
@@ -577,6 +625,13 @@ function rollout(s0: Sim, rootSeat: number, rnd: () => number, jitter: number): 
       const sc = staticSim(s, v) + rnd() * jitter;
       if (sc > bestS) { bestS = sc; bestV = v; }
     }
+    // rollout 不枚举拿取组合, 只检查特权能否解锁更好的立即购买。
+    let bestCells: number[] | undefined;
+    for (const { v, cells } of privilegePlans(s)) {
+      const score = staticSim(s, v) - cells.length * 0.01;
+      if (score > bestS) { bestS = score; bestV = v; bestCells = cells; }
+    }
+    if (bestCells) takePrivilegesSim(s, bestCells);
     makeSim(s, bestV);
   }
   return 0.5; // 步数上限兜底(400 > 单方可达步数): 和
@@ -655,24 +710,6 @@ function refineConditional(view: GameState, seat: 0 | 1, move: Move, rnd: () => 
   return best;
 }
 
-/** 特权: 对已选行动逐枚贪心补最优格(特权在 action 前结算, 用行动前的棋盘格) */
-function refinePrivileges(ctx: TurnContext, move: Move, rnd: () => number): Move {
-  const p = ctx.view.players[ctx.seat]!;
-  let cur = move;
-  let curScore = trySim(ctx.view, ctx.seat, cur, rnd);
-  for (let k = 0; k < p.privileges; k++) {
-    let bestCell: number | null = null;
-    for (const cell of ctx.legal.privilegeCells) {
-      if ((cur.privileges ?? []).includes(cell)) continue;
-      const s = trySim(ctx.view, ctx.seat, { ...cur, privileges: [...(cur.privileges ?? []), cell] }, rnd);
-      if (s > curScore) { curScore = s; bestCell = cell; }
-    }
-    if (bestCell == null) break;
-    cur = { ...cur, privileges: [...(cur.privileges ?? []), bestCell] };
-  }
-  return cur;
-}
-
 /** 自愿补货只在明显有利时(补货给对手 1 特权 ≈ -6.75 估值, 阈值 5) */
 function refineReplenish(view: GameState, seat: 0 | 1, move: Move, rnd: () => number): Move {
   const r = trySim(view, seat, { ...move, replenish: true }, rnd);
@@ -696,6 +733,7 @@ export interface MctsOptions {
   seed?: number;
   uctC?: number; // UCT 探索常数(胜负 0/1 尺度)
   jitter?: number; // rollout 静态分抖动幅度
+  playouts?: number; // 固定模拟次数(替代墙钟预算), 用于可复现测试/调参
 }
 
 function sameAction(a: MandatoryAction, b: MandatoryAction): boolean {
@@ -713,11 +751,14 @@ function sameAction(a: MandatoryAction, b: MandatoryAction): boolean {
 }
 
 export function mctsAgent(opts: MctsOptions = {}): Agent & { stats: MctsStats } {
+  if (opts.playouts !== undefined && (!Number.isSafeInteger(opts.playouts) || opts.playouts < 1)) {
+    throw new RangeError('playouts 必须是正整数');
+  }
   const timeMs = opts.timeMs ?? 4000;
   const uctC = opts.uctC ?? 0.7;
   const jitter = opts.jitter ?? 3;
   const rngState = { rngState: opts.seed ?? 0x51ed270b };
-  const rnd = (): number => mulberry32Step(rngState); // 共享随机流: 抖动/估值平分用
+  const rnd = (): number => mulberry32Step(rngState); // rollout 抖动用; root 修正不引入随机噪声
   const stats: MctsStats = { moves: 0, totalMs: 0, maxDepth: 0, timeouts: 0, playouts: 0 };
 
   const agent: Agent & { stats: MctsStats } = {
@@ -737,32 +778,33 @@ export function mctsAgent(opts: MctsOptions = {}): Agent & { stats: MctsStats } 
       for (const ch of children) {
         const nn = expandChild(root, ch, me);
         if (nn.terminal === 1) {
+          const move = refineConditional(ctx.view, me, { action: decodeAction(ch.v), privileges: ch.privileges }, () => 0);
           stats.totalMs += Date.now() - t0;
-          return { action: decodeAction(ch.v) };
+          return move;
         }
       }
 
-      let action: MandatoryAction;
-      if (children.length === 1) {
-        action = decodeAction(children[0]!.v); // 唯一行动: 免搜索
-      } else {
+      let best = children[0]!;
+      if (children.length > 1) { // 唯一行动: 免搜索
         let n = 0;
-        while (Date.now() < deadline) {
+        while (opts.playouts !== undefined ? n < opts.playouts : Date.now() < deadline) {
           playout(root, me, rnd, uctC, jitter);
           n++;
         }
         stats.playouts += n;
-        let best = children[0]!;
         for (const ch of children) if (ch.N > best.N) best = ch; // 稳健子: 访问数最多
-        action = decodeAction(best.v);
       }
 
       // 保险丝: 模拟核与引擎分歧时兜底(对拍测试保证不应发生)
-      if (!ctx.legal.actions.some((a) => sameAction(a, action))) action = ctx.legal.actions[0]!;
-
+      let selected: Move = { action: decodeAction(best.v), privileges: best.privileges };
+      // 特权会解锁原 legal.actions 中没有的购买, 必须在可选阶段之后检查。
+      if (best.privileges) {
+        if (!Number.isFinite(trySim(ctx.view, me, selected, () => 0))) selected = { action: ctx.legal.actions[0]! };
+      } else if (!ctx.legal.actions.some((a) => sameAction(a, selected.action))) {
+        selected = { action: ctx.legal.actions[0]! };
+      }
       const move = refineReplenish(
-        ctx.view, me,
-        refinePrivileges(ctx, refineConditional(ctx.view, me, { action }, rnd), rnd),
+        ctx.view, me, refineConditional(ctx.view, me, selected, () => 0), () => 0,
       );
       stats.totalMs += Date.now() - t0;
       return move;

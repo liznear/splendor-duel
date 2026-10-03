@@ -1,0 +1,3 @@
+{"game":1,"seed":20261003,"seat":0,"winner":"candidate","turns":64,"privilegeTokens":5}
+{"game":2,"seed":20261003,"seat":1,"winner":"candidate","turns":72,"privilegeTokens":5}
+{"summary":true,"baseline":"/tmp/splender-mcts-before.ts","options":{"playouts":500,"seed":7},"games":2,"wins":[2,0],"draws":0,"illegal":0,"privilegeTokens":10,"moves":70,"playoutsPerSecond":8839}

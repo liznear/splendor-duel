@@ -3,11 +3,11 @@
 //       每步比较合法行动集合与全部可观测字段(含 rng 流), 保证镜像语义。
 import { describe, expect, test } from 'bun:test';
 import {
-  applyMove, applyReplenish, createGame, GEMS, legalMoves, maxColorPointsOf, mulberry32Step,
+  applyMove, applyOption, applyReplenish, createGame, GEMS, legalMoves, maxColorPointsOf, mulberry32Step,
   playerView, type GameState, type MandatoryAction, type Move, type TokenColor,
 } from '../src/engine/game.js';
 import {
-  copySim, decodeAction, encodeAction, enumActions, importSim, makeSim, replenishSim, settleSim,
+  copySim, decodeAction, encodeAction, enumActions, importSim, makeSim, replenishSim, settleSim, takePrivilegesSim,
   type Sim,
 } from '../src/agents/mcts.js';
 import { mctsAgent } from '../src/agents/mcts.js';
@@ -89,6 +89,21 @@ function mirrorGame(seed: number): number {
       replenishSim(sim);
       lm = legalMoves(st);
     }
+    // 随机插入特权阶段, 校验主行动前不换手且不提前弃置。
+    const cells: number[] = [];
+    const eligible = lm.privilegeCells.slice();
+    for (let i = 0; i < st.players[st.current].privileges && eligible.length && mulberry32Step(rng) < 0.6; i++) {
+      cells.push(eligible.splice(Math.floor(mulberry32Step(rng) * eligible.length), 1)[0]!);
+    }
+    if (cells.length) {
+      const next = applyOption(st, { privileges: cells });
+      if (legalMoves(next).actions.length > 0) {
+        st = next;
+        takePrivilegesSim(sim, cells);
+        expect(snapSim(sim)).toEqual(snapEngine(st));
+        lm = legalMoves(st);
+      }
+    }
     // 合法行动集合一致(经编码比较; 同时校验 decode 往返)
     const nSim = enumActions(sim, SCRATCH);
     const simSet = Array.from({ length: nSim }, (_, i) => SCRATCH[i]!).sort((a, b) => a - b);
@@ -137,6 +152,71 @@ describe('MCTS 模拟核对拍', () => {
     expect(legalMoves(st).actions.length).toBe(0);
     expect(settleSim(sim, SCRATCH)).toBe(0);
   });
+});
+
+describe('MCTS 特权决策', () => {
+  test('固定模拟次数与种子产生相同行动', async () => {
+    const st = createGame({ seed: 42, firstSeat: 0 });
+    const ctx = { seat: st.current, view: playerView(st, st.current), legal: legalMoves(st), turn: st.turnCount };
+    const a = mctsAgent({ playouts: 40, seed: 7 });
+    const b = mctsAgent({ playouts: 40, seed: 7 });
+    expect(await a.chooseMove(ctx)).toEqual(await b.chooseMove(ctx));
+    expect(a.stats.playouts).toBe(40);
+    expect(b.stats.playouts).toBe(40);
+    expect(() => mctsAgent({ playouts: 0 })).toThrow();
+  });
+
+  test('预留卡结合黄金与折扣补缺, 只花必要特权', async () => {
+    const st = createGame({ seed: 43, firstSeat: 0 });
+    const p = st.players[0];
+    p.points = 19;
+    p.privileges = 3;
+    p.tokens.gold = 1;
+    p.bonuses.black = 1;
+    st.players[1].privileges = 0;
+    st.board = Array(25).fill(null);
+    st.board[0] = 'pearl';
+    st.board[2] = 'black';
+    st.board[4] = 'red';
+    st.pyramid = Array(12).fill(null);
+    p.reserved = [{
+      id: 'priv-reserved-gold', level: 1, color: 'red', isAssociate: false,
+      points: 1, bonus: 1, ability: null, crowns: 0,
+      cost: { pearl: 1, black: 2, red: 1, green: 0, blue: 0, white: 0 },
+    }];
+    const move = await mctsAgent({ playouts: 40 }).chooseMove({
+      seat: 0, view: playerView(st, 0), legal: legalMoves(st), turn: st.turnCount,
+    });
+    expect(move.action).toEqual({ kind: 'buy', from: { kind: 'reserved', index: 0 } });
+    expect(move.privileges).toEqual([0, 2]);
+    const next = applyMove(st, move);
+    expect(next.winner).toBe(0);
+    expect(next.players[0].privileges).toBe(1);
+  });
+
+  for (const count of [1, 2, 3]) {
+    test(`使用 ${count} 枚特权解锁本回合获胜购买`, async () => {
+      const st = createGame({ seed: 42, firstSeat: 0 });
+      st.players[0].points = 19;
+      st.players[0].privileges = count;
+      st.players[1].privileges = 0;
+      st.board = Array(25).fill(null);
+      for (let i = 0; i < count; i++) st.board[i * 2] = 'red';
+      st.bag = [];
+      st.pyramid = Array(12).fill(null);
+      st.pyramid[7] = {
+        id: `priv-win-${count}`, level: 1, color: 'red', isAssociate: false,
+        points: 1, bonus: 1, ability: null, crowns: 0,
+        cost: { pearl: 0, black: 0, red: count, green: 0, blue: 0, white: 0 },
+      };
+      const agent = mctsAgent({ timeMs: 10, seed: 7 });
+      const move = await agent.chooseMove({
+        seat: 0, view: playerView(st, 0), legal: legalMoves(st), turn: st.turnCount,
+      });
+      expect(move.privileges?.length).toBe(count);
+      expect(applyMove(st, move).winner).toBe(0);
+    });
+  }
 });
 
 describe('MCTS agent 冒烟', () => {

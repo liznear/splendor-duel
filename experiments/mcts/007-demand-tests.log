@@ -1,0 +1,22 @@
+bun test v1.3.10 (30e609e0)
+
+test/mcts-sim.test.ts:
+对拍总步数: 2020
+(pass) MCTS 模拟核对拍 > 20 个种子的完整随机对局逐步一致 [405.01ms]
+(pass) MCTS 模拟核对拍 > copySim 与原状态等价且独立(修改副本不影响原) [1.00ms]
+(pass) MCTS 模拟核对拍 > settleSim 处理 mustReplenish 与死局
+(pass) MCTS 特权决策 > 固定模拟次数与种子产生相同行动 [32.00ms]
+(pass) MCTS 特权决策 > 预留卡结合黄金与折扣补缺, 只花必要特权
+(pass) MCTS 特权决策 > 使用 1 枚特权解锁本回合获胜购买 [1.00ms]
+(pass) MCTS 特权决策 > 使用 2 枚特权解锁本回合获胜购买
+(pass) MCTS 特权决策 > 使用 3 枚特权解锁本回合获胜购买
+(pass) MCTS 拿取排序 > 优先拿能解锁购买的宝石, 而非无需求的珍珠 [1.00ms]
+冒烟对局: turns=61 winner=0 illegal=0 playouts/move≈1426 (45638 playouts / 32 moves, 109ms/step)
+(pass) MCTS agent 冒烟 > vs greedy 完整对局: 走法全部被引擎接受 [3663.08ms]
+中局单步: 9294 playouts in 1001ms => 9285 playouts/s
+(pass) MCTS agent 冒烟 > 模拟速度: 中局状态每秒 playouts 达标(方案目标 ≥1000 局/s) [1007.02ms]
+
+ 11 pass
+ 0 fail
+ 50858 expect() calls
+Ran 11 tests across 1 file. [5.12s]
