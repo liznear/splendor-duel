@@ -1,6 +1,6 @@
 // llm3 纯分析函数自检: 跨回合记忆 / 目标追踪 / 竞速与 outs / 行动列表 id (不调 LLM)
 import { describe, expect, test } from 'bun:test';
-import { applyMove, applyReplenish, createGame, legalMoves, playerView, type GameState } from '../src/engine/game.js';
+import { applyMove, applyReplenish, canBuy, createGame, legalMoves, playerView, type GameState } from '../src/engine/game.js';
 import {
   actionListV3, createV3, crossesWin, memoBlock, oppOuts, raceBlock, routeBlock, routeThreatBlock, shortfall, targetBlock,
 } from '../src/agents/llm3.js';
@@ -128,6 +128,23 @@ describe('llm3 竞速与阻断', () => {
     const race = raceBlock(playerView(st, 0), 0).join('\n');
     expect(race).toContain('现成胜线');
     expect(race).toMatch(/拆除|抢跑|阻断/);
+  });
+
+  test('无带色卡时预留的百搭卡不计为可买(与引擎 canBuy 同口径)', () => {
+    const st = createGame({ seed: 4 });
+    const seat = st.current as 0 | 1;
+    const me = st.players[seat]!;
+    const assoc = CARDS.find((c) => c.isAssociate)!;
+    me.reserved.push(assoc);
+    me.tokens = { black: 4, red: 4, green: 4, blue: 4, white: 4, pearl: 2, gold: 3 }; // token 足额
+    expect(shortfall(me, assoc)).toBe(Infinity);
+    expect(canBuy(me, assoc)).toBe(false);
+    const race = raceBlock(playerView(st, seat), seat).join('\n');
+    expect(race).not.toContain(assoc.id); // 不得宣称"本回合可买"
+    const tb = targetBlock(playerView(st, seat), seat, createV3().memory).join('\n');
+    const reservedLine = tb.split('\n').find((l) => l.includes(assoc.id))!;
+    expect(reservedLine).toContain('带色卡');
+    expect(reservedLine).not.toContain('现在就能买');
   });
 });
 

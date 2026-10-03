@@ -960,9 +960,9 @@ function renderExtrasModal(box) {
     ALL_COLORS.filter((t) => after[t] > 0).forEach((t) => {
       const inp = document.createElement('input');
       inp.type = 'number'; inp.min = '0'; inp.max = String(after[t]);
-      inp.value = ui.extras.discard[t] ?? 0;
+      inp.value = ui.extras.discard?.[t] ?? 0;
       inp.addEventListener('input', () => {
-        ui.extras.discard[t] = Number(inp.value || 0);
+        (ui.extras.discard ??= {})[t] = Number(inp.value || 0);
         refreshExtrasConfirm(excess); // 不整页重渲染, 保住输入焦点
       });
       const tok = el('span', 'tok');

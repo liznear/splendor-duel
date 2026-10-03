@@ -515,9 +515,11 @@ function runOptional(st: GameState, opts: { privileges?: number[]; replenish?: b
   const who = st.current;
   const p = st.players[who]!, o = st.players[1 - who]!;
   if (opts.privileges?.length) {
+    if (opts.privileges.length > p.privileges) {
+      throw new IllegalMove(`特权数量不足: 每枚特权只能拿 1 格, 你有 ${p.privileges} 枚, 不能拿 ${opts.privileges.length} 格`);
+    }
     const got: TokenColor[] = [];
     for (const cell of opts.privileges) {
-      if (p.privileges <= 0) throw new IllegalMove('没有特权可用');
       const t = st.board[cell];
       if (t == null || t === 'gold') throw new IllegalMove(`特权不能拿 ${cellName(cell)}`);
       got.push(takeFromBoard(st, cell, p, '特权'));

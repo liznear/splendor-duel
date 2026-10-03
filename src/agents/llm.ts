@@ -1,7 +1,9 @@
 // LLM agent: 通过 pi coding agent SDK 调用大模型下棋 (tool-call 协议)
-// 回合分两阶段下发消息: 阶段1(可选行动, 有特权/可补货时才出现) / 阶段2(强制行动, 必有).
-// 4 个工具全程激活(不按阶段切换): 阶段约束由各工具内部守卫返回中文错误,
-// 避免工具不在激活集时 SDK 返回裸 "tool not found"(模型无法自纠).
+// 每个 game turn 新建一个 session(无跨回合历史, 阶段1/2 与重试共享): 跨回合记忆只靠注入的分析块
+// (make_move 的 memo / 外层 V3Memory 的流水账等), 不依赖会话历史.
+// 每个阶段 = 一个 pi turn: prompt 显式列出本阶段可用的工具, setActiveToolsByName 只激活这些;
+// 终结工具(skip_optional / make_move 成功)返回 terminate:true, agent loop 在该 tool batch 后
+// 确定性收尾, 由应用层驱动下一阶段. 越阶段调用被工具内守卫拦下并给出中文提示(双保险).
 // 可选行动在模拟状态上即时结算(applyOption), 阶段2 的合法行动列表按模拟后棋盘重算;
 // 特权拿取不消耗随机数, 补货洗牌只依赖袋内容 => 最终拼装的 Move 交给引擎时与模拟完全一致.
 import type { Agent, TurnContext } from './agent.js';
@@ -15,6 +17,7 @@ import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 
 type PiModule = typeof import('@earendil-works/pi-coding-agent');
+type PiSession = Awaited<ReturnType<PiModule['createAgentSession']>>['session'];
 
 export const GEM_ZH2CODE: Record<string, Gem> = {
   白: 'white', 白色: 'white', 蓝: 'blue', 蓝色: 'blue', 绿: 'green', 绿色: 'green',
@@ -50,17 +53,18 @@ const SYSTEM_PROMPT = `你是 Splendor Duel(璀璨宝石对决)棋手, 目标是
   [必须] 三选一: 1) 拿1-3个横/竖/斜连续相邻的非金token(黄金和空格会阻断; 3个同色或含2珍珠 => 对手得1特权)
     2) 拿1黄金+预留1张卡(金字塔或牌库顶, 最多预留3张) 3) 购买1张卡(金字塔或自己预留的).
 - 买卡: 支付费用-已有折扣, 黄金可当任意色, 珍珠无折扣抵扣. 卡能力(额外回合/拿同色/偷取/特权/百搭)当场结算.
-- 百搭卡(无固定色)购买时指定叠放到自己已有的颜色列, 其分数计入该色(同色胜利用).
+- 百搭卡(无固定色)必须先拥有至少 1 张带色卡(无色分卡不算)才能购买, 购买时指定叠放到自己已有的颜色列, 其分数计入该色(同色胜利用).
 - 皇冠达到 3/6 时立刻从剩余皇家卡中领1张(免费分+能力). 回合结束时 token 总数(珍珠与黄金都计入)超过 10 要弃到 10.
 - 胜利(回合结束判定): 20分 或 10皇冠 或 同一颜色卡累计10分. 起始随机先手, 后手得1特权; 特权池空时从对手处夺取.
 
-== 交互协议(每回合分阶段; 工具全程可用, 越阶段调用会被工具内校验拦下并给出提示) ==
-- 阶段1(仅当有特权可用或可补货): use_privilege / use_replenish / skip_optional.
-  use_privilege 给出格子坐标数组(一次1-3格, 可多次调用直到特权用完); 都不划算就 skip_optional.
+== 交互协议(每个 game turn 分阶段, 每阶段一条消息 = 一次回复机会; 每条消息只激活该阶段列出的工具, 只能从中选用) ==
+- 阶段1(仅当有特权可用或可补货): 可用工具 use_privilege / use_replenish / skip_optional(以消息内列出的为准).
+  use_privilege 给出格子坐标数组(每枚特权只能拿 1 格, 一次最多传 3 格且总数不得超过剩余特权, 可多次调用); 都不划算就 skip_optional.
   补货后仍可用特权(按先补货后特权执行), 但特权与补货不能交错多次.
-  可选阶段结束(含调用 skip_optional 之后)请停止调用工具结束本轮, 等待下一条消息.
-- 阶段2: 工具 make_move, 从【本条消息】的编号行动列表中选 i(必填), 需要时带条件参数.
-  编号列表每回合重新生成, 严禁复用旧消息里的编号.
+  调 skip_optional 或不再调用任何工具即结束本阶段; make_move 此时不可用.
+- 阶段2: 可用工具仅 make_move, 从【本条消息】的编号行动列表中选 i(必填), 需要时带条件参数.
+  make_move 成功后本回合立即结束. 编号列表每回合重新生成, 严禁复用旧编号.
+- 每个回合都是独立对话(看不到历史消息): 局面与跨回合信息以本条消息的报告为准.
 - 参数校验是严格的: 百搭卡颜色/皇家卡选择/偷取颜色/拿同色格/超10弃置, 只要被触发就必须显式给出且合法,
   缺失或非法会返回具体错误提示(含可选值清单), 按提示修正后重新调用即可, 不会静默采用默认值.
 - 不要输出 JSON 文本, 只用工具.
@@ -123,6 +127,8 @@ interface TurnSlot {
 
 const err = (text: string) => ({ content: [{ type: 'text' as const, text: `错误: ${text}` }], details: {} });
 const ok = (text: string) => ({ content: [{ type: 'text' as const, text }], details: {} });
+/** 成功且终结本 pi turn: agent loop 在本 tool batch 后停止, 控制权回到应用层 */
+const done = (text: string) => ({ content: [{ type: 'text' as const, text }], details: {}, terminate: true });
 
 // ---- 上下文渲染 (llm 棋手与自然语言解析器共用) ----
 
@@ -164,6 +170,24 @@ function colorPointsOf(p: PlayerState, color: Gem): number {
   return p.cards.filter((c) => c.color === color).reduce((s, c) => s + c.def.points, 0);
 }
 
+/** 对手上一手: 从引擎日志提取其最近一个完整回合的行(按回合分隔符定位, 按行动方名字过滤;
+ *  盲留卡 id 遮蔽为 ??, 不泄露隐藏信息) */
+export function oppLastTurnText(view: GameState, seat: 0 | 1): string {
+  const oppName = view.players[1 - seat]!.name;
+  let start = -1;
+  for (let i = view.log.length - 1; i >= 0; i--) {
+    const l = view.log[i]!;
+    if (l.startsWith('——') && l.includes(`回合 ${oppName} ——`)) { start = i; break; }
+  }
+  if (start < 0) return '(对手尚未行动)';
+  const after = view.log.slice(start + 1);
+  const end = after.findIndex((l) => l.startsWith('——')); // 下一回合开始处截断
+  const seg = end >= 0 ? after.slice(0, end) : after;
+  // 只保留对手名字开头的行: 排除我方可选行动(applyOption 会在其后追加)与分隔符
+  const lines = seg.filter((l) => l.startsWith(oppName)).slice(0, 12);
+  return lines.map((l) => l.replace(/预留 \S+ \(来源: L\d 牌库顶\)/, '预留 ??(牌库顶盲留)')).join('\n') || '(对手上一手无事件)';
+}
+
 /** 共享局面块(不含行动列表), 供 LLM 棋手两阶段与自然语言解析器复用 */
 export function buildContext(view: GameState, seat: 0 | 1): string {
   const me = view.players[seat]!;
@@ -186,6 +210,7 @@ export function buildContext(view: GameState, seat: 0 | 1): string {
     if (open.length > 0) lines.push(`  对手明留卡: ${open.map((c) => cardCompact(c)).join(' ; ')}`);
     if (blindN > 0) lines.push(`  对手盲留: ${blindN}张(内容保密)`);
   }
+  lines.push('', `【对手上一手】\n${oppLastTurnText(view, seat)}`);
   // 威胁提示(5秒习惯自动化)
   const threats: string[] = [];
   if (opp.crowns >= 7) threats.push(`对手皇冠 ${opp.crowns}/10, 一张皇冠卡就可能获胜 => 皇冠封锁最优先`);
@@ -219,7 +244,8 @@ export function buildContext(view: GameState, seat: 0 | 1): string {
 }
 
 export function llmAgent(opts: LlmOptions = {}): Agent {
-  let session: Awaited<ReturnType<PiModule['createAgentSession']>>['session'] | null = null;
+  // 基础设施(模型解析 + 资源加载器)只建一次; session 每个 game turn 新建, 阶段间共享
+  let infra: { pi: PiModule; loader: InstanceType<PiModule['DefaultResourceLoader']>; model: unknown } | null = null;
   let useModel = opts.model;
   let slot: TurnSlot | null = null;
   let lastRaw = '';
@@ -227,7 +253,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
 
   // 汇总 prompt 期间新增的 assistant 消息(thinking/文本/工具调用), 供界面展示; 模型思考在 content 的 thinking 块里
   const tidy = (s: string) => s.replace(/\n{2,}/g, '\n').trim(); // 压掉连续空行
-  function collectReply(s: NonNullable<typeof session>, from: number): string {
+  function collectReply(s: PiSession, from: number): string {
     const parts: string[] = [];
     for (const m of s.messages.slice(from)) {
       if (m.role !== 'assistant') continue;
@@ -303,7 +329,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     async execute() {
       if (!slot || slot.phase !== 'optional') return err('当前不在可选行动阶段');
       slot.phase = 'done';
-      return ok('OK: 已跳过可选行动. 请结束本轮回复(不再调用任何工具), 等下一条带【可执行的行动】编号列表的消息里选 i 再调 make_move.');
+      return done('OK: 已跳过可选行动, 可选阶段结束(本回合到此为止, 等待下一条消息).');
     },
   });
 
@@ -461,12 +487,12 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
       slot.submitted = true;
       if (opts.memoBox && typeof params.memo === 'string' && params.memo.trim())
         opts.memoBox.current = params.memo.trim().slice(0, 120); // 成功才写入, 后一次(额外回合)覆盖前一次
-      return ok('OK, 走法已接受');
+      return done('OK, 走法已接受, 本回合结束.');
     },
   });
 
-  async function ensureSession() {
-    if (session) return session;
+  async function ensureInfra() {
+    if (infra) return infra;
     const pi = await import('@earendil-works/pi-coding-agent');
     const rt = await pi.ModelRuntime.create();
     const avail = await rt.getAvailable();
@@ -492,17 +518,23 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
       appendSystemPromptOverride: () => [],
     });
     await loader.reload();
+    infra = { pi, loader, model };
+    return infra;
+  }
+
+  /** 每个 game turn 一个全新 session: 无历史污染, 跨回合状态只靠 prompt 注入(memo/分析块) */
+  async function newSession() {
+    const { pi, loader, model } = await ensureInfra();
     const { session: s } = await pi.createAgentSession({
       resourceLoader: loader,
       sessionManager: pi.SessionManager.inMemory(),
       // 代码内固定 thinking 预算, 不读也不改任何配置文件 (low=4K 供批量 A/B 提速用)
       settingsManager: pi.SettingsManager.inMemory({ thinkingBudgets: { low: 4096, medium: 16384 } }),
-      tools: ['use_privilege', 'use_replenish', 'skip_optional', 'make_move'], // 全量注册且全程激活; 阶段约束由各工具内部校验
+      tools: ['use_privilege', 'use_replenish', 'skip_optional', 'make_move'], // 初始全量注册; 每 prompt 前按阶段 setActiveToolsByName
       customTools: [privilegeTool as never, replenishTool as never, skipTool as never, moveTool as never],
       ...(model ? { model: model as never } : {}),
       thinkingLevel: opts.thinkingLevel ?? 'medium',
     });
-    session = s;
     if (opts.onThinking) {
       // 流式: 订阅 thinking/文本增量, 回调给宿主实时展示(工具调用仍由 collectReply 事后汇总)
       s.subscribe((event) => {
@@ -514,7 +546,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
         }
       });
     }
-    return session;
+    return s;
   }
 
   // ---- 上下文渲染: 见下方模块级 buildContext (与自然语言解析器共用) ----
@@ -536,7 +568,7 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     const nRes = lm.actions.filter((a) => a.kind === 'reserve').length;
     const nBuy = lm.actions.filter((a) => a.kind === 'buy').length;
     const lines: string[] = [];
-    lines.push(`第 ${ctx.turn + 1} 回合, 轮到你. 先决定【可选行动】(可以都不用):`);
+    lines.push(`全局第 ${ctx.turn + 1} 手(约第 ${Math.floor(ctx.turn / 2) + 1} 回合), 轮到你. 先决定【可选行动】(可以都不用):`);
     lines.push(buildContext(sim, ctx.seat));
     if (opts.contextExtra) lines.push(opts.contextExtra(sim, ctx.seat));
     lines.push('', '【可选行动阶段】');
@@ -550,25 +582,25 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     lines.push('提示: 特权优先拿珍珠或对手急需的色; 棋盘还有好线/可买的卡时通常不补货; 特权拿过的格子强制行动阶段不可再拿.');
     const canUsePriv = me.privileges > 0 && lm.privilegeCells.length > 0;
     const toolList = [
-      ...(canUsePriv ? ['use_privilege(格子数组)'] : []),
+      ...(canUsePriv ? ['use_privilege(格子坐标数组)'] : []),
       ...(lm.canReplenish ? ['use_replenish()'] : []),
       'skip_optional()',
     ].join(' / ');
-    lines.push(`调用工具提交: ${toolList}. 结束后停止调用工具, make_move 需等下一条带编号行动列表的消息.`);
+    lines.push(`本阶段【只激活】以下工具, 从中选一个调用: ${toolList}. 结束方式: 调 skip_optional 或不再调用任何工具; make_move 要等下一条消息(强制行动阶段)才可用.`);
     return lines.join('\n');
   }
 
   function buildPhase2Prompt(ctx: TurnContext, sim: GameState, part: Partial<Move>, lm: LegalMoves, failMsg: string): string {
     const me = sim.players[ctx.seat]!;
     const lines: string[] = [];
-    lines.push(`继续第 ${ctx.turn + 1} 回合 —— 现在【必须】从下面列表选一个强制行动:`);
+    lines.push(`继续第 ${ctx.turn + 1} 手 —— 现在【必须】调用 make_move 从下面列表选一个强制行动:`);
     lines.push(buildContext(sim, ctx.seat));
     lines.push('', `本回合可选行动: ${summarizeOptional(part, ctx.view)}`);
     if (me.reserved.length > 0) lines.push(`我的预留卡: ${me.reserved.map((c, i) => `${i + 1}: ${cardCompact(c)}`).join(' ; ')}`);
     if (opts.digest) lines.push('', opts.digest(sim, ctx.seat, lm));
     lines.push('', `【可执行的行动】(编号 i, 共 ${lm.actions.length} 个):`);
     lines.push(opts.actionList ? opts.actionList(sim, ctx.seat, lm) : stripAnsi(renderActions(sim, ctx.seat, lm)));
-    lines.push('', '调用 make_move 提交 (i 必填; 触发时必填: associateColor=买百搭卡选色 / royalPick=领皇家卡下标 / stealPick=偷取颜色 / takeSameCell=拿同色格 / discard=超10弃置. 缺失会返回错误并列出可选值, 按提示补齐重调; memo 可选: 一句话计划备忘, 下回合注入):');
+    lines.push('', '本阶段【只激活】make_move 工具 (i 必填; 触发时必填: associateColor=买百搭卡选色 / royalPick=领皇家卡下标 / stealPick=偷取颜色 / takeSameCell=拿同色格 / discard=超10弃置. 缺失会返回错误并列出可选值, 按提示补齐重调; memo 可选: 一句话计划备忘, 下回合注入):');
     if (failMsg) lines.push(`上一次失败: ${failMsg}\n请调用 make_move 工具提交合法走法.`);
     return lines.join('\n');
   }
@@ -577,32 +609,36 @@ export function llmAgent(opts: LlmOptions = {}): Agent {
     name: opts.name ?? `LLM${opts.model ? `(${opts.model.split('/').pop()})` : ''}`,
     get lastRaw() { return lastRaw; },
     async chooseMove(ctx: TurnContext): Promise<Move> {
-      const s = await ensureSession();
+      const s = await newSession(); // 每个 game turn 一个新 session; 阶段1/2 与重试共享
       liveRaw = ''; // 重置本回合流式缓冲
-      // 工具全程激活(不按阶段切换): 阶段约束由工具内部守卫报中文错误, 避免 SDK 裸 "tool not found"
-      s.setActiveToolsByName(['use_privilege', 'use_replenish', 'skip_optional', 'make_move']);
       const msgFrom = s.messages.length; // 本回合消息起点, 收集 thinking 用
       const me = ctx.view.players[ctx.seat]!;
       const canPriv = me.privileges > 0 && ctx.legal.privilegeCells.length > 0;
 
-      // ---- 阶段1: 可选行动 (仅当有特权或可补货) ----
+      // ---- 阶段1: 可选行动 (仅当有特权或可补货; 只激活本阶段工具) ----
       let sim = ctx.view;
       const part: Partial<Move> = {};
       if (canPriv || ctx.legal.canReplenish) {
         slot = { base: ctx.view, sim, part, phase: 'optional', lm: ctx.legal, submitted: false };
+        s.setActiveToolsByName([
+          ...(canPriv ? ['use_privilege'] : []),
+          ...(ctx.legal.canReplenish ? ['use_replenish'] : []),
+          'skip_optional',
+        ]);
         await s.prompt(buildPhase1Prompt(ctx, sim));
         if (opts.verbose) console.log(`\n[LLM 阶段1] ${(slot.part.privileges?.length ?? 0)}枚特权, 补货=${slot.part.replenish === true}`);
         sim = slot.sim;
         // 未调用任何工具 = 视为跳过; 调用过但全失败也按已提交的部分算(可能为空 => 跳过)
       }
 
-      // ---- 阶段2: 强制行动 (合法列表按可选行动后的棋盘重算) ----
+      // ---- 阶段2: 强制行动 (合法列表按可选行动后的棋盘重算; 只激活 make_move) ----
       const lm = legalMoves(sim);
       if (lm.actions.length === 0) {
         // 理论不可达(arena 已处理 mustReplenish); 兜底
         console.warn(`⚠ ${opts.name ?? 'LLM'} 可选行动后无强制行动, 使用兜底`);
         return fallbackMove(ctx);
       }
+      s.setActiveToolsByName(['make_move']);
       let lastErr = '';
       for (let attempt = 0; attempt < 3; attempt++) {
         slot = { base: ctx.view, sim, part: { ...part }, phase: 'mandatory', lm, submitted: false };

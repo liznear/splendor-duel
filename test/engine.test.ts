@@ -159,6 +159,8 @@ describe('特权/补货/上限', () => {
     const st = applyMove(g, { privileges: [0], action: { kind: 'take', cells: [5] } });
     expect(st.players[0].tokens.blue).toBe(2);
     expect(() => applyMove(g, { privileges: [1], action: { kind: 'take', cells: [5] } })).toThrow(); // 特权拿黄金非法
+    expect(() => applyMove(g, { privileges: [0, 5, 10], action: { kind: 'take', cells: [5] } }))
+      .toThrow(/特权数量不足.*每枚特权只能拿 1 格.*你有 1 枚.*不能拿 3 格/); // 超量时报原因, 不再是含糊的"没有特权可用"
   });
   test('replenishFirst: 先补货后特权, 可拿新填上的格', () => {
     const board = Array(25).fill(null);

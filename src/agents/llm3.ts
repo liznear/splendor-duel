@@ -20,6 +20,8 @@ import { ABILITY_ZH, actionText, GEM_ZH, TOKEN_ZH } from '../render.js';
 
 /** 买该卡还差几个 token(珍珠+宝石缺口, 黄金可抵; 0=现在就能买). 与 v2 同口径 */
 export function shortfall(p: PlayerState, card: CardLike): number {
+  // 引擎 canBuy 同口径: 没有带色卡(无色分卡不算)时百搭卡不可买, 缺口视为无穷大
+  if (card.isAssociate && !p.cards.some((c) => c.color !== null)) return Infinity;
   const eff = effectiveCost(p, card);
   let need = Math.max(0, eff.pearl - p.tokens.pearl);
   for (const g of GEMS) need += Math.max(0, eff[g] - p.tokens[g]);
@@ -338,6 +340,10 @@ export function targetBlock(view: GameState, seat: 0 | 1, mem: V3Memory): string
   }
   for (const [i, c] of me.reserved.entries()) {
     const s = shortfall(me, c);
+    if (s === Infinity) {
+      lines.push(`- 我预留${i + 1}(${c.id} ${cardShort(c)}) ⚠百搭卡需先拥有 1 张带色卡(分卡不算)才能购买`);
+      continue;
+    }
     const w = crossesWin(me, c);
     lines.push(`- 我预留${i + 1}(${c.id} ${cardShort(c)}) 差${s}token${s === 0 ? ' 现在就能买!' : ''}${w.length && s <= 2 ? ` ⚠买后${w.join('+')}` : ''}`);
   }
@@ -568,17 +574,18 @@ const SYSTEM_PROMPT_V3 = `你是 Splendor Duel(璀璨宝石对决)棋手, 目标
     2) 预留: 从棋盘拿1枚黄金入手 + 预留1张卡(金字塔任意张明留或牌库顶盲留, 最多3张). 注意: 黄金是【拿入手】的万能token(之后买卡时当任意色支付), 预留不花费任何东西; 前提是棋盘上还有黄金格.
     3) 购买1张卡(金字塔或自己预留的).
 - 买卡: 支付费用-已有折扣, 黄金可当任意色, 珍珠无折扣抵扣. 卡能力(额外回合/拿同色/偷取/特权/百搭)当场结算.
-- 百搭卡(无固定色)购买时指定叠放到自己已有的颜色列, 其分数计入该色(同色胜利用).
+- 百搭卡(无固定色)必须先拥有至少 1 张带色卡(无色分卡不算)才能购买, 购买时指定叠放到自己已有的颜色列, 其分数计入该色(同色胜利用).
 - 皇冠达到 3/6 时立刻从剩余皇家卡中领1张(免费分+能力). 回合结束时 token 总数(珍珠与黄金都计入)超过 10 要弃到 10.
 - 胜利(回合结束判定): 20分 或 10皇冠 或 同一颜色卡累计10分. 起始随机先手, 后手得1特权; 特权池空时从对手处夺取.
 
-== 交互协议(每回合分阶段; 工具全程可用, 越阶段调用会被工具内校验拦下并给出提示) ==
-- 阶段1(仅当有特权可用或可补货): use_privilege / use_replenish / skip_optional.
-  use_privilege 给出格子坐标数组(一次1-3格, 可多次调用直到特权用完); 都不划算就 skip_optional.
+== 交互协议(每个 game turn 分阶段, 每阶段一条消息 = 一次回复机会; 每条消息只激活该阶段列出的工具, 只能从中选用) ==
+- 阶段1(仅当有特权可用或可补货): 可用工具 use_privilege / use_replenish / skip_optional(以消息内列出的为准).
+  use_privilege 给出格子坐标数组(每枚特权只能拿 1 格, 一次最多传 3 格且总数不得超过剩余特权, 可多次调用); 都不划算就 skip_optional.
   补货后仍可用特权(按先补货后特权执行), 但特权与补货不能交错多次.
-  可选阶段结束(含调用 skip_optional 之后)请停止调用工具结束本轮, 等待下一条消息.
-- 阶段2: 工具 make_move, 从【本条消息】的编号行动列表中选 i(必填), 需要时带条件参数(可选 memo: 一句话计划备忘, 下回合注入供核对).
-  编号列表每回合重新生成, 严禁复用旧消息里的编号.
+  调 skip_optional 或不再调用任何工具即结束本阶段; make_move 此时不可用.
+- 阶段2: 可用工具仅 make_move, 从【本条消息】的编号行动列表中选 i(必填), 需要时带条件参数(可选 memo: 一句话计划备忘, 下回合注入供核对).
+  make_move 成功后本回合立即结束. 编号列表每回合重新生成, 严禁复用旧编号.
+- 每个回合都是独立对话(无历史消息): 跨回合状态全部来自注入的【上回合备忘】【流水账】【对手上一手】等分析块, 与之冲突的记忆不可信.
 - 参数校验是严格的: 百搭卡颜色/皇家卡选择/偷取颜色/拿同色格/超10弃置, 只要被触发就必须显式给出且合法,
   缺失或非法会返回具体错误提示(含可选值清单), 按提示修正后重新调用即可, 不会静默采用默认值.
 - 不要输出 JSON 文本, 只用工具.
