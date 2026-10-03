@@ -38,6 +38,9 @@
 | 008-playouts | 同一 TT 候选排除模拟次数差异 | 同 500 次，其余同上 | 5 胜 7 负；命中率 4.01%；平均每步 31ms vs 26ms | 未达到保留门槛，不进入独立种子复核 |
 | 009-time | 仅替换 400 步截断时的回报为胜利路线进度评分 | 对 004，同 120ms，12 局，seed 20900000，上限 180 | 5 胜 7 负；20/1610430 次 rollout 截断（0.001242%） | 影响面不足，撤回 |
 | 009-playouts | 同一 leaf 候选排除模拟次数差异 | 同 500 次，其余同上 | 7 胜 5 负；3/206592 次截断（0.001452%）；平均每步双方均 25ms | 非稳定提升证据，不进入独立种子复核 |
+| 010-screen | 正行动先验＋PUCT，取消先强制访问所有未展开行动 | 对 004，同 120ms / 同 500 次，各 12 局，seed 21000000，上限 180 | 两种预算均 7 胜 5 负 | 初步信号，冻结参数进入独立复核 |
+| 010-holdout | 同一 PUCT 独立种子复核 | 同 120ms 24 局 seed 21090000；同 500 次 24 局 seed 21180000 | 同时间 13 胜 11 负；同次数 16 胜 8 负 | 同时间优势不明确，追加独立种子，不调参数 |
+| 010-confirm | 同一 PUCT 第二组独立复核 | 同 120ms 24 局 seed 21270000；同 500 次 24 局 seed 21360000 | 同时间 8 胜 16 负；同次数 14 胜 10 负 | 撤回：固定次数信号未转化为同时间预算优势 |
 
 ## 007：被撤回的需求权重候选
 
@@ -92,8 +95,37 @@ bun scripts/mcts-benchmark.ts --games 12 --playouts 500 \
   --baseline experiments/mcts/baseline-004.ts --seed 20900000 --max-turns 180
 ```
 
+## 010：被撤回的 heuristic prior / PUCT
+
+基准 Git 见 `010-base-ref.txt`。改动仅在树策略：展开时将行动静态分 `score` 映射为权重 `1 + 9*max(0,score)/max(1,bestScore)`，随后归一化为概率 `P`；正权重避免零先验永久排除行动。选择分改为 `Q + c*P*sqrt(parentVisits+1)/(edgeVisits+1)`，对手视角使用 `1-Q`，未访问均值仍为 0.5。未展开行动也参加此规则，不再强制逐一首演。根节点全量一步获胜检查与最终最多访问行动规则不变。
+
+`c` 保持原数值 0.7，rollout 的分数/jitter/400 步上限、特权规划、模拟核及预算均未改。注意 UCT 与 PUCT 的探索项尺度不同，沿用 0.7 是本候选配置，不意味着探索力度相当；不能用此结果否定其他 PUCT 参数或先验映射。
+
+现有确定性、模拟核对拍、引擎合法性及特权获胜回归均通过（完整测试 73 项）。六轮对战合计 120 局，均无和棋、触顶或非法行动。筛选两种预算均 7–5 后，保持源码和参数冻结，做两组独立种子复核。
+
+排除筛选集，独立同时间样本合计 21 胜 27 负；固定次数样本合计 30 胜 18 负。固定次数表现有正向信号，但独立墙钟样本并未改善，第二组甚至反向。PUCT 的平均模拟计数明显更高（同时间三轮约 10338/10604/12898 次每步，对手 4579/4037/4550），不等于获得更多独立信息：可能更频繁访问已知终局或更深的相同分支，未单独测量这些成分。不能据计数增加宣称加速或棋力提升。
+
+因此不替换生产基线，撤回源码，保存 `010-puct-candidate.patch`、六份 JSONL 和测试日志。追加复核是基于先前观察进行的，不作预注册显著性声明，也不把筛选样本算作独立复核。
+
+恢复候选 patch 后复现，各阶段使用同一个冻结候选：
+
+```bash
+bun scripts/mcts-benchmark.ts --games 12 --time-ms 120 \
+  --baseline experiments/mcts/baseline-004.ts --seed 21000000 --max-turns 180
+bun scripts/mcts-benchmark.ts --games 12 --playouts 500 \
+  --baseline experiments/mcts/baseline-004.ts --seed 21000000 --max-turns 180
+bun scripts/mcts-benchmark.ts --games 24 --time-ms 120 \
+  --baseline experiments/mcts/baseline-004.ts --seed 21090000 --max-turns 180
+bun scripts/mcts-benchmark.ts --games 24 --playouts 500 \
+  --baseline experiments/mcts/baseline-004.ts --seed 21180000 --max-turns 180
+bun scripts/mcts-benchmark.ts --games 24 --time-ms 120 \
+  --baseline experiments/mcts/baseline-004.ts --seed 21270000 --max-turns 180
+bun scripts/mcts-benchmark.ts --games 24 --playouts 500 \
+  --baseline experiments/mcts/baseline-004.ts --seed 21360000 --max-turns 180
+```
+
 ## 下一轮
 
-TT 和 400 步截断评价的当前实现均已撤回。下一项独立测试 heuristic prior/PUCT；若希望让 leaf evaluation 影响更多搜索，应另立缩短 rollout 的实验，再与相同截断深度的中立回报对照。可另立实验比较更便宜的 TT 或新的 rollout。已有贪心 rollout，不把它误记成尚未实现的能力。每项单独 benchmark，不一次叠加。
+TT、400 步截断评价及当前 PUCT 配置均已撤回。可将下一项设为 PUCT 探索强度校准：冻结 010 的先验映射，仅改 `c`，先与 010 配置比较，再独立对照保留的 UCT 基线，不能直接叠加上线。若希望让 leaf evaluation 影响更多搜索，应另立缩短 rollout 的实验，再与相同截断深度的中立回报对照。已有贪心 rollout，每项单独 benchmark，不一次叠加。
 
 已知项目类型检查问题：`scripts/compare.ts` 引用了未定义的 `AbStats`（初始版本已有），不把这些既存错误当作本轮新回归。
