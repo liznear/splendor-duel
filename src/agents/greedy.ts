@@ -21,12 +21,12 @@ function evalPlayer(p: PlayerState, view: GameState): number {
   return s;
 }
 
-export function evaluate(state: GameState, seat: 0 | 1): number {
+export function evaluate(state: GameState, seat: 0 | 1, rnd: () => number = Math.random): number {
   if (state.winner === seat) return 1e9;
   if (state.winner !== null) return -1e9;
   const me = evalPlayer(state.players[seat]!, state);
   const opp = evalPlayer(state.players[1 - seat]!, state);
-  return me - 0.75 * opp + Math.random() * 0.01;
+  return me - 0.75 * opp + rnd() * 0.01;
 }
 
 function trySim(ctx: TurnContext, move: Move): number | null {

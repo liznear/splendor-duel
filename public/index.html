@@ -28,6 +28,8 @@
         <option value="llm3">LLM3(分析增强)</option>
         <option value="greedy">贪心bot</option>
         <option value="random">随机bot</option>
+        <option value="ab">αβbot(搜索)</option>
+        <option value="mcts">MCTSbot(蒙特卡洛)</option>
       </select>
     </label>
     <label class="llm-only">模型 (可选, 如 anthropic/claude-sonnet-4-5):
@@ -38,6 +40,9 @@
         <option value="1">我后手 (先得1特权)</option>
         <option value="0">我先手</option>
       </select>
+    </label>
+    <label class="search-only">搜索超时 秒 (αβbot/MCTS):
+      <input id="h-search-ms" type="number" min="1" max="120" step="1" value="10">
     </label>
     <button id="btn-start" class="primary">开始对局</button>
   </div>
@@ -50,6 +55,8 @@
         <option value="llm2">LLM2(改进版)</option>
         <option value="llm3">LLM3(分析增强)</option>
         <option value="random">随机bot</option>
+        <option value="ab">αβbot(搜索)</option>
+        <option value="mcts">MCTSbot(蒙特卡洛)</option>
       </select>
     </label>
     <label>后手 Agent:
@@ -59,10 +66,15 @@
         <option value="llm">LLM</option>
         <option value="llm2">LLM2(改进版)</option>
         <option value="llm3">LLM3(分析增强)</option>
+        <option value="ab">αβbot(搜索)</option>
+        <option value="mcts">MCTSbot(蒙特卡洛)</option>
       </select>
     </label>
     <label class="llm-only">LLM 模型 (可选):
       <input id="a-model" placeholder="provider/model, 留空用默认">
+    </label>
+    <label class="search-only">搜索超时 秒 (αβbot/MCTS):
+      <input id="a-search-ms" type="number" min="1" max="120" step="1" value="10">
     </label>
     <button id="btn-start-agents" class="primary">开始对局</button>
   </div>

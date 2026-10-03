@@ -5,6 +5,7 @@ import {
 } from '../engine/game.js';
 import { randomAgent } from '../agents/random.js';
 import { greedyAgent } from '../agents/greedy.js';
+import { workerSearchAgent } from '../agents/search-agent.js';
 import { llmAgent } from '../agents/llm.js';
 import { llm2Agent } from '../agents/llm2.js';
 import { llm3Agent } from '../agents/llm3.js';
@@ -45,10 +46,15 @@ const games = new Map<string, Game>();
 let gameSeq = 0;
 
 function makeBot(spec: string, onThinking?: (name: string, text: string) => void): Agent {
-  const [kind, ...rest] = spec.split(':');
+  const [kind, ...rest] = spec.split('@');
   const arg = rest.join(':');
   switch (kind) {
     case 'random': return randomAgent();
+    case 'ab':
+    case 'mcts': {
+      // 后缀 @ms 控制每步搜索时间上限: ab / ab@3000 / mcts / mcts@3000; 搜索在 worker 子线程
+      return workerSearchAgent(spec, kind === 'ab' ? 'αβbot' : 'MCTSbot');
+    }
     case 'greedy': return greedyAgent();
     case 'llm':
     case 'llm2':

@@ -315,8 +315,16 @@ function llmSpec(sel, modelInput) {
   return m ? `${v}:${m}` : v;
 }
 
+/** 搜索型 bot 的 spec: 拼上界面里配置的每步超时秒数 (默认 10s) */
+function searchSpec(sel, msInput) {
+  const v = $(sel).value;
+  if (v !== 'ab' && v !== 'mcts') return v;
+  const ms = Math.max(1, Number($(msInput).value) || 10) * 1000;
+  return `${v}@${ms}`;
+}
+
 $('#btn-start').addEventListener('click', async () => {
-  const spec = llmSpec('#h-bot', '#h-model');
+  const spec = searchSpec('#h-bot', '#h-search-ms') || llmSpec('#h-bot', '#h-model');
   const seat = Number($('#h-seat').value);
   const payload = await api('/api/new', {
     mode: 'human',
@@ -328,7 +336,8 @@ $('#btn-start').addEventListener('click', async () => {
 });
 
 $('#btn-start-agents').addEventListener('click', async () => {
-  const payload = await api('/api/new', { mode: 'agents', p1: llmSpec('#a-p1', '#a-model'), p2: llmSpec('#a-p2', '#a-model') });
+  const spec = (sel) => searchSpec(sel, '#a-search-ms') || llmSpec(sel, '#a-model');
+  const payload = await api('/api/new', { mode: 'agents', p1: spec('#a-p1'), p2: spec('#a-p2') });
   startGame(payload);
 });
 
@@ -353,6 +362,20 @@ async function awaitBot(request) {
   }
 }
 
+/** 等对局首屏图片加载/失败完成(带超时兜底); ab 同步搜索会堵死服务器, 须先取图再调 /api/bot */
+function boardImagesSettled(timeoutMs = 2000) {
+  const pending = [...document.querySelectorAll('#game img')].filter((i) => !i.complete);
+  if (!pending.length) return Promise.resolve();
+  let left = pending.length;
+  const done = new Promise((res) => {
+    for (const i of pending) {
+      i.addEventListener('load', () => { if (--left === 0) res(); }, { once: true });
+      i.addEventListener('error', () => { if (--left === 0) res(); }, { once: true });
+    }
+  });
+  return Promise.race([done, new Promise((res) => setTimeout(res, timeoutMs))]);
+}
+
 function startGame(payload) {
   G = payload;
   if (payload.file) location.hash = payload.file; // 刷新可自动续局
@@ -363,9 +386,11 @@ function startGame(payload) {
   $('#human-controls').classList.toggle('hidden', G.mode !== 'human');
   render();
   if (payload.pending) {
-    awaitBot(api(`/api/bot/${G.id}`, {})).then((r) => {
-      Object.assign(G, r);
-      revealBotMove();
+    boardImagesSettled().then(() => {
+      awaitBot(api(`/api/bot/${G.id}`, {})).then((r) => {
+        Object.assign(G, r);
+        revealBotMove();
+      });
     });
   }
 }
