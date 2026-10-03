@@ -1,0 +1,100 @@
+bun test v1.3.10 (30e609e0)
+
+test/web.e2e.test.ts:
+(pass) 静态资源 > / 返回中文页面 [2.00ms]
+(pass) 静态资源 > app.js / style.css 可访问 [1.00ms]
+(pass) 人机对战 API > 开局 -> 人类走一步 -> bot 应答 -> 轮回人类 [70.91ms]
+(pass) 人机对战 API > 可选行动即时执行: 特权确认后立即入账 [43.94ms]
+(pass) 人机对战 API > 非法走法 400 [21.97ms]
+(pass) 人机对战 API > 非本人回合 400 [21.97ms]
+(pass) 人机对战 API > 对手仅盲留卡隐藏, 明留卡可见 [273.64ms]
+(pass) Agent 对战 API > step 逐步推进直至结束 [447.43ms]
+(pass) Agent 对战 API > 人机对局不接受 step [2.00ms]
+
+test/resume.test.ts:
+(pass) 会话记录与 resume > 录制 -> 重放, 终局完全一致 [738.07ms]
+(pass) 会话记录与 resume > 事件序列截断 => 可重放到任意中途位置 [252.69ms]
+
+test/llm.test.ts:
+(pass) oppLastTurnText > 先手视角开局无对手行动 [1.00ms]
+(pass) oppLastTurnText > 对手行动过: 返回其最近一个回合的行 [3.00ms]
+(pass) oppLastTurnText > 对手盲留时遮蔽卡 id
+
+test/llm3.test.ts:
+(pass) llm3 跨回合状态 > 流水账按步累积且能辨认买卡 [5.99ms]
+(pass) llm3 跨回合状态 > 目标被对手买走时显式宣布失效 [1.00ms]
+(pass) llm3 备忘注入 > make_move memo 经 memoBox 注入下回合并核对卡存活 [1.00ms]
+(pass) llm3 备忘注入 > 防守承诺未兑现且威胁仍在时标⚡
+(pass) llm3 路线威胁与中期路线 > 对手单色线临门+免费推进卡时触发⚡处置 [1.00ms]
+(pass) llm3 路线威胁与中期路线 > 中期路线跨回合维持, 关键卡失守才变更
+(pass) llm3 竞速与阻断 > 对手能买致胜卡时被计为 outs 并给出裁决 [1.00ms]
+(pass) llm3 竞速与阻断 > 无带色卡时预留的百搭卡不计为可买(与引擎 canBuy 同口径)
+(pass) llm3 行动列表 > 买/预留行带稳定卡 id, 拿取标注送特权 [1.00ms]
+
+test/mcts-sim.test.ts:
+对拍总步数: 2020
+(pass) MCTS 模拟核对拍 > 20 个种子的完整随机对局逐步一致 [386.53ms]
+(pass) MCTS 模拟核对拍 > copySim 与原状态等价且独立(修改副本不影响原)
+(pass) MCTS 模拟核对拍 > settleSim 处理 mustReplenish 与死局
+(pass) MCTS 转置表 > 状态键覆盖规则状态, 忽略袋子未使用的尾部 [2.00ms]
+(pass) MCTS 转置表 > 拿同色 token 的不同顺序共享状态, 不重复创造节点 [4.00ms]
+(pass) MCTS 特权决策 > 固定模拟次数与种子产生相同行动 [28.97ms]
+(pass) MCTS 特权决策 > 预留卡结合黄金与折扣补缺, 只花必要特权 [1.00ms]
+(pass) MCTS 特权决策 > 使用 1 枚特权解锁本回合获胜购买 [1.00ms]
+(pass) MCTS 特权决策 > 使用 2 枚特权解锁本回合获胜购买 [1.00ms]
+(pass) MCTS 特权决策 > 使用 3 枚特权解锁本回合获胜购买
+冒烟对局: turns=69 winner=0 illegal=0 playouts/move≈5017 (170591 playouts / 34 moves, 117ms/step)
+(pass) MCTS agent 冒烟 > vs greedy 完整对局: 走法全部被引擎接受 [4174.38ms]
+中局单步: 18292 playouts in 1001ms => 18274 playouts/s
+(pass) MCTS agent 冒烟 > 模拟速度: 中局状态每秒 playouts 达标(方案目标 ≥1000 局/s) [1005.98ms]
+
+test/parse.test.ts:
+(pass) moveFromParams > 编号选中对应强制行动
+(pass) moveFromParams > 非法编号报中文错误
+(pass) moveFromParams > 中文条件参数映射到引擎枚举 [1.00ms]
+(pass) moveFromParams > base(可选行动部分)并入 Move
+(pass) moveFromParams > 无法识别的颜色/坐标/弃置键报中文错误
+(pass) completeConditionals (缺参追问检测) > 百搭卡多色叠放需追问
+(pass) completeConditionals (缺参追问检测) > 单色自动补齐不追问
+(pass) completeConditionals (缺参追问检测) > 跨皇冠里程碑且多张皇家卡需追问
+(pass) completeConditionals (缺参追问检测) > 偷取多色可偷需追问; 单色自动补
+(pass) completeConditionals (缺参追问检测) > 非购买行动不追问
+
+test/preview.test.ts:
+(pass) previewTokens > bug 场景: 10 token 买拿同色卡 -> 支付后再判, 不需弃置
+(pass) previewTokens > 特权到 11 个再买, 支付后仍 <= 10 [1.00ms]
+(pass) previewTokens > 拿 3 枚超限: 超额 2, 且候选含刚拿到的颜色
+(pass) previewTokens > 支付用黄金补缺口, 与引擎 paymentFor 总量一致
+(pass) previewTokens > 偷取卡: +1 对手珍珠 (未选色默认珍珠)
+(pass) previewTokens > 预留: +1 黄金
+
+test/engine.test.ts:
+(pass) 卡牌数据 > 67 张: 30/24/13; 皇家卡 4 张
+(pass) 卡牌数据 > token 配比: 5 色各 4 + 珍珠 2 + 黄金 3 = 25
+(pass) 卡牌数据 > 开局: 后手 1 特权, 金字塔 12 张
+(pass) 拿 token 规则 > 直线相邻枚举: 黄金与空格阻断
+(pass) 拿 token 规则 > 3 个同色 -> 对手获得 1 特权
+(pass) 拿 token 规则 > 拿 2 珍珠 -> 对手获得 1 特权
+(pass) 拿 token 规则 > 非直线/跨空格/黄金 -> 非法 [1.00ms]
+(pass) 购买与支付 > 折扣抵扣 + 黄金补缺口 + 花费进袋
+(pass) 购买与支付 > 实际购买: token 转袋, 卡到手
+(pass) 购买与支付 > 费用可被折扣降到 0 (免单)
+(pass) 特权/补货/上限 > 特权: 每枚拿 1 个非金 token; 不能拿黄金 [1.00ms]
+(pass) 特权/补货/上限 > replenishFirst: 先补货后特权, 可拿新填上的格
+(pass) 特权/补货/上限 > 特权池空时可从对手处夺取
+(pass) 特权/补货/上限 > token 超过 10 弃置 (含指定方案)
+(pass) 特权/补货/上限 > 补货: 花掉的 token 回填, 对手得特权 [1.00ms]
+(pass) 皇冠/皇家卡/能力 > 第3/6皇冠触发皇家卡; 一次跨双阈值也只领 1 张
+(pass) 皇冠/皇家卡/能力 > 偷取能力: 默认偷珍珠优先
+(pass) 皇冠/皇家卡/能力 > 额外回合: 同一玩家连续行动
+(pass) 胜利条件 > 20 分 / 10 皇冠 / 同色 10 分 [1.00ms]
+(pass) 胜利条件 > 百搭卡计入指定颜色列
+(pass) 引擎健壮性 > 同 seed 完全可复现 [40.96ms]
+(pass) 引擎健壮性 > 随机自对弈 30 局: 全部正常结束, token 始终守恒 [391.61ms]
+(pass) 引擎健壮性 > 贪心自对弈 5 局: 全部在 600 回合内分出胜负或和局 [1782.30ms]
+(pass) 引擎健壮性 > 死局检测
+
+ 75 pass
+ 0 fail
+ 54128 expect() calls
+Ran 75 tests across 8 files. [10.05s]

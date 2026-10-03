@@ -1,0 +1,18 @@
+bun test v1.3.10 (30e609e0)
+
+test/mcts-sim.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+1 | })
+2 | {
+    ^
+SyntaxError: Export named 'simKey' not found in module '/home/nearsyh/Developer/splender/src/agents/mcts.ts'.
+      at loadAndEvaluateModule (2:1)
+-------------------------------
+
+
+ 0 pass
+ 1 fail
+ 1 error
+Ran 1 test across 1 file. [21.00ms]

@@ -1,0 +1,256 @@
+diff --git i/scripts/mcts-benchmark.ts w/scripts/mcts-benchmark.ts
+index 3618cc3..8ee9113 100644
+--- i/scripts/mcts-benchmark.ts
++++ w/scripts/mcts-benchmark.ts
+@@ -36,7 +36,10 @@ const baselineOptions: MctsOptions = args.includes('--baseline-time-ms')
+   ? { timeMs: positive('--baseline-time-ms', 120), seed: 7 }
+   : args.includes('--baseline-playouts')
+     ? { playouts: positive('--baseline-playouts', 500), seed: 7 }
+-    : options;
++    : { ...options };
++options.transpositions = args.includes('--tt');
++baselineOptions.transpositions = args.includes('--baseline-tt');
++if (baseline === 'greedy' && args.includes('--baseline-tt')) throw new Error('greedy has no transposition table');
+ const baselineFactory: (options: MctsOptions) => Agent & { stats?: MctsStats } = baseline === 'greedy'
+   ? () => greedyAgent('G')
+   : baseline === 'mcts' ? mctsAgent
+@@ -44,6 +47,7 @@ const baselineFactory: (options: MctsOptions) => Agent & { stats?: MctsStats } =
+ const wins = [0, 0];
+ let draws = 0, cappedDraws = 0, illegal = 0, privilegeTokens = 0, moves = 0, playouts = 0, totalMs = 0;
+ let baselineMoves = 0, baselinePlayouts = 0, baselineMs = 0;
++let ttLookups = 0, ttHits = 0, ttEntries = 0;
+ for (let i = 0; i < games; i++) {
+   const subject = mctsAgent({ ...options, name: 'candidate' });
+   let used = 0;
+@@ -75,6 +79,9 @@ for (let i = 0; i < games; i++) {
+   moves += subject.stats.moves;
+   playouts += subject.stats.playouts;
+   totalMs += subject.stats.totalMs;
++  ttLookups += subject.stats.ttLookups;
++  ttHits += subject.stats.ttHits;
++  ttEntries += subject.stats.ttEntries;
+   baselineMoves += opponentAgent.stats?.moves ?? 0;
+   baselinePlayouts += opponentAgent.stats?.playouts ?? 0;
+   baselineMs += opponentAgent.stats?.totalMs ?? 0;
+@@ -82,7 +89,8 @@ for (let i = 0; i < games; i++) {
+ }
+ console.log(JSON.stringify({
+   summary: true, baseline, options, baselineOptions, maxTurns, games, wins, draws, cappedDraws, illegal,
+-  privilegeTokens, moves, baselineMoves,
++  privilegeTokens, moves, baselineMoves, ttLookups, ttHits, ttEntries,
++  ttHitRate: ttLookups ? ttHits / ttLookups : 0,
+   playoutsPerMove: Math.round(playouts / Math.max(1, moves)),
+   baselinePlayoutsPerMove: Math.round(baselinePlayouts / Math.max(1, baselineMoves)),
+   msPerMove: Math.round(totalMs / Math.max(1, moves)),
+diff --git i/src/agents/mcts.ts w/src/agents/mcts.ts
+index ec34c81..b7d822f 100644
+--- i/src/agents/mcts.ts
++++ w/src/agents/mcts.ts
+@@ -517,6 +517,23 @@ interface MChild {
+   prior: number;
+ }
+ 
++/** 无碰撞的完整状态键; 卡牌定义按不可变 id 引用, 袋子只保留有效前缀。
++ * turnCount 保证非终局边严格推进, 不合并不同深度, 避免搜索图出现环。 */
++export function simKey(s: Sim): string {
++  return JSON.stringify([
++    s.board, s.bag.subarray(0, s.bagLen),
++    s.decks.map(deck => deck.map(card => card.id)), s.pyramid.map(card => card?.id ?? null),
++    s.royals.map(royal => royal.id), s.tokens, s.bonuses, s.colorPts, s.colorCnt,
++    s.reserved.map(cards => cards.map(card => card.id)), s.points, s.crowns,
++    s.privileges, s.royalsTaken, s.current, s.extraTurns, s.turnCount, s.winner, s.rngState,
++  ]);
++}
++
++interface Transpositions {
++  nodes: Map<string, MNode>;
++  stats: MctsStats;
++}
++
+ interface MNode {
+   sim: Sim;
+   n: number;
+@@ -583,13 +600,28 @@ function expandNode(node: MNode): void {
+   node.children = ch;
+ }
+ 
+-function expandChild(node: MNode, ch: MChild, rootSeat: number): MNode {
++function expandChild(node: MNode, ch: MChild, rootSeat: number, tt?: Transpositions): MNode {
+   const sim = copySim(node.sim);
+   if (ch.privileges) takePrivilegesSim(sim, ch.privileges);
+   makeSim(sim, ch.v);
+   const nn: MNode = { sim, n: 0, children: null, terminal: -1 };
+   if (sim.winner >= 0) nn.terminal = sim.winner === rootSeat ? 1 : 0;
+   else if (settleSim(sim, SCRATCH_B) === 0) nn.terminal = 0.5; // 死局和棋
++  if (tt) {
++    tt.stats.ttLookups++;
++    const key = simKey(sim);
++    const cached = tt.nodes.get(key);
++    if (cached) {
++      tt.stats.ttHits++;
++      ch.node = cached;
++      return cached;
++    }
++    // ponytail: 每次搜索最多缓存 5 万节点, 不跨回合保留 root 视角统计。
++    if (tt.nodes.size < 50_000) {
++      tt.nodes.set(key, nn);
++      tt.stats.ttEntries++;
++    }
++  }
+   ch.node = nn;
+   return nn;
+ }
+@@ -638,7 +670,7 @@ function rollout(s0: Sim, rootSeat: number, rnd: () => number, jitter: number):
+ }
+ 
+ /** 单次模拟: 选择 -> 展开 -> rollout -> 回传 */
+-function playout(root: MNode, rootSeat: number, rnd: () => number, uctC: number, jitter: number): void {
++function playout(root: MNode, rootSeat: number, rnd: () => number, uctC: number, jitter: number, tt?: Transpositions): void {
+   const path: MChild[] = [];
+   let node = root;
+   let z: number;
+@@ -653,7 +685,7 @@ function playout(root: MNode, rootSeat: number, rnd: () => number, uctC: number,
+     if (child === undefined) child = selectBest(node, rootSeat, uctC);
+     path.push(child);
+     if (child.node === null) {
+-      const nn = expandChild(node, child, rootSeat);
++      const nn = expandChild(node, child, rootSeat, tt);
+       z = nn.terminal >= 0 ? nn.terminal : rollout(nn.sim, rootSeat, rnd, jitter);
+       break;
+     }
+@@ -725,6 +757,9 @@ export interface MctsStats {
+   maxDepth: number; // 未用(保持 0, 汇总兼容)
+   timeouts: number; // 未用(保持 0, MCTS 按时间预算自然截止)
+   playouts: number;
++  ttLookups: number;
++  ttHits: number;
++  ttEntries: number; // 各回合插入数累计, 非当前表大小
+ }
+ 
+ export interface MctsOptions {
+@@ -734,6 +769,7 @@ export interface MctsOptions {
+   uctC?: number; // UCT 探索常数(胜负 0/1 尺度)
+   jitter?: number; // rollout 静态分抖动幅度
+   playouts?: number; // 固定模拟次数(替代墙钟预算), 用于可复现测试/调参
++  transpositions?: boolean; // 实验开关: 每次搜索内共享相同状态节点, 缺省关闭
+ }
+ 
+ function sameAction(a: MandatoryAction, b: MandatoryAction): boolean {
+@@ -759,7 +795,7 @@ export function mctsAgent(opts: MctsOptions = {}): Agent & { stats: MctsStats }
+   const jitter = opts.jitter ?? 3;
+   const rngState = { rngState: opts.seed ?? 0x51ed270b };
+   const rnd = (): number => mulberry32Step(rngState); // rollout 抖动用; root 修正不引入随机噪声
+-  const stats: MctsStats = { moves: 0, totalMs: 0, maxDepth: 0, timeouts: 0, playouts: 0 };
++  const stats: MctsStats = { moves: 0, totalMs: 0, maxDepth: 0, timeouts: 0, playouts: 0, ttLookups: 0, ttHits: 0, ttEntries: 0 };
+ 
+   const agent: Agent & { stats: MctsStats } = {
+     name: opts.name ?? `MCTSbot(${Math.round(timeMs / 1000)}s)`,
+@@ -771,12 +807,17 @@ export function mctsAgent(opts: MctsOptions = {}): Agent & { stats: MctsStats }
+       const me = ctx.seat;
+ 
+       const root: MNode = { sim: importSim(ctx.view), n: 0, children: null, terminal: -1 };
++      const tt: Transpositions | undefined = opts.transpositions ? { nodes: new Map(), stats } : undefined;
++      if (tt) {
++        tt.nodes.set(simKey(root.sim), root);
++        stats.ttEntries++;
++      }
+       expandNode(root);
+       const children = root.children!;
+ 
+       // 根全量展开一次(首演即建节点) + 一步胜线: 买了即赢直接返回
+       for (const ch of children) {
+-        const nn = expandChild(root, ch, me);
++        const nn = expandChild(root, ch, me, tt);
+         if (nn.terminal === 1) {
+           const move = refineConditional(ctx.view, me, { action: decodeAction(ch.v), privileges: ch.privileges }, () => 0);
+           stats.totalMs += Date.now() - t0;
+@@ -788,7 +829,7 @@ export function mctsAgent(opts: MctsOptions = {}): Agent & { stats: MctsStats }
+       if (children.length > 1) { // 唯一行动: 免搜索
+         let n = 0;
+         while (opts.playouts !== undefined ? n < opts.playouts : Date.now() < deadline) {
+-          playout(root, me, rnd, uctC, jitter);
++          playout(root, me, rnd, uctC, jitter, tt);
+           n++;
+         }
+         stats.playouts += n;
+diff --git i/test/mcts-sim.test.ts w/test/mcts-sim.test.ts
+index b223a79..2bc74b1 100644
+--- i/test/mcts-sim.test.ts
++++ w/test/mcts-sim.test.ts
+@@ -7,7 +7,7 @@ import {
+   playerView, type GameState, type MandatoryAction, type Move, type TokenColor,
+ } from '../src/engine/game.js';
+ import {
+-  copySim, decodeAction, encodeAction, enumActions, importSim, makeSim, replenishSim, settleSim, takePrivilegesSim,
++  copySim, decodeAction, encodeAction, enumActions, importSim, makeSim, replenishSim, settleSim, takePrivilegesSim, simKey,
+   type Sim,
+ } from '../src/agents/mcts.js';
+ import { mctsAgent } from '../src/agents/mcts.js';
+@@ -154,6 +154,67 @@ describe('MCTS 模拟核对拍', () => {
+   });
+ });
+ 
++describe('MCTS 转置表', () => {
++  test('状态键覆盖规则状态, 忽略袋子未使用的尾部', () => {
++    const sim = importSim(createGame({ seed: 42, firstSeat: 0 }));
++    sim.bag.set([0, 1]);
++    sim.bagLen = 2;
++    const key = simKey(sim);
++    expect(simKey(copySim(sim))).toBe(key);
++    const unused = copySim(sim);
++    unused.bag[31] = 5;
++    expect(simKey(unused)).toBe(key);
++    const changes: ((s: Sim) => void)[] = [
++      s => { s.board[0] = -1; },
++      s => { s.bag[0] = 5; },
++      s => { s.bagLen++; },
++      s => { s.decks[0]!.reverse(); },
++      s => { s.pyramid[0] = null; },
++      s => { s.royals.reverse(); },
++      s => { s.tokens[0]![0]!++; },
++      s => { s.bonuses[1]![0]!++; },
++      s => { s.colorPts[0]![0]!++; },
++      s => { s.colorCnt[1]![0]!++; },
++      s => { s.reserved[0]!.push(s.pyramid[1]!); },
++      s => { s.points[0]++; },
++      s => { s.crowns[1]++; },
++      s => { s.privileges[0]++; },
++      s => { s.royalsTaken[1]++; },
++      s => { s.current = 1; },
++      s => { s.extraTurns++; },
++      s => { s.turnCount++; },
++      s => { s.winner = 0; },
++      s => { s.rngState++; },
++    ];
++    for (const change of changes) {
++      const copy = copySim(sim);
++      change(copy);
++      expect(simKey(copy)).not.toBe(key);
++    }
++  });
++
++  test('拿同色 token 的不同顺序共享状态, 不重复创造节点', async () => {
++    const st = createGame({ seed: 45, firstSeat: 0 });
++    st.board = Array(25).fill(null);
++    for (const cell of [0, 2, 4]) st.board[cell] = 'red';
++    st.bag = [];
++    st.decks = [[], [], []];
++    st.pyramid = Array(12).fill(null);
++    const ctx = { seat: st.current, view: playerView(st, st.current), legal: legalMoves(st), turn: st.turnCount };
++    const a = mctsAgent({ playouts: 100, seed: 7, transpositions: true });
++    const b = mctsAgent({ playouts: 100, seed: 7, transpositions: true });
++    const move = await a.chooseMove(ctx);
++    expect(move).toEqual(await b.chooseMove(ctx));
++    expect(() => applyMove(st, move)).not.toThrow();
++    expect(a.stats.ttHits).toBeGreaterThan(0);
++    expect(a.stats.ttLookups).toBeGreaterThan(a.stats.ttHits);
++    expect(a.stats.ttEntries).toBeLessThan(a.stats.ttLookups + 1);
++    const plain = mctsAgent({ playouts: 100, seed: 7 });
++    await plain.chooseMove(ctx);
++    expect(plain.stats.ttLookups).toBe(0);
++  });
++});
++
+ describe('MCTS 特权决策', () => {
+   test('固定模拟次数与种子产生相同行动', async () => {
+     const st = createGame({ seed: 42, firstSeat: 0 });

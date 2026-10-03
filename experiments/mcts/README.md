@@ -34,6 +34,8 @@
 | 006 | 同一版本增加时间预算 | 004 的 240ms vs 60ms，12 局，seed 20600000，上限 180 回合 | 8 胜 4 负；无和棋/触顶；平均模拟 3936 vs 911 次/步 | 初步支持时间增益，尚需更大样本与更长预算验证 |
 | 007-time | 按可见购买缺口加权拿 token | 对 004，同 120ms，12 局，seed 20700000，上限 180 | 4 胜 8 负；无和棋/触顶 | 撤回，不作为新基线 |
 | 007-playouts | 同一候选排除模拟次数差异 | 对 004，同 500 次，其余同上 | 4 胜 8 负；平均每步 53ms vs 26ms | 未展示收益且成本增加；不进入独立种子复核 |
+| 008-time | 搜索内完整状态字符串 TT，共享相同状态节点 | 同版本开关，同 120ms，12 局，seed 20800000，上限 180 | 4 胜 8 负；命中率 7.41%；平均模拟 1826 vs 4774 次/步 | 撤回，此实现开销大于可见收益 |
+| 008-playouts | 同一 TT 候选排除模拟次数差异 | 同 500 次，其余同上 | 5 胜 7 负；命中率 4.01%；平均每步 31ms vs 26ms | 未达到保留门槛，不进入独立种子复核 |
 
 ## 007：被撤回的需求权重候选
 
@@ -52,8 +54,25 @@ bun scripts/mcts-benchmark.ts --games 12 --playouts 500 \
   --baseline experiments/mcts/baseline-004.ts --seed 20700000 --max-turns 180
 ```
 
+## 008：被撤回的完整状态 TT
+
+基准 Git 见 `008-base-ref.txt`。唯一算法变量：每次 chooseMove 内建立 Map，完整状态键包含棋盘、有效袋子前缀、牌库/金字塔/预留/皇家卡 id 及顺序、双方全部聚合字段、行动方、额外回合、turnCount、胜负和 RNG。保留 turnCount，不合并不同深度，避免搜索图出现环；不跨回合共享 root 视角回报。相同状态共享节点及其出边，入边统计仍独立；最多缓存 5 万节点。
+
+状态键测试覆盖全部规则字段和袋子尾部；人工构造的不同同色拿取顺序确实产生命中；固定次数可复现。候选完整测试 75 项通过。两种预算下均无和棋、触顶或非法走法。
+
+墙钟实验模拟次数下降约 62%，固定次数实验耗时增加约 19%。尽管确有转置，当前字符串序列化/查表/共享图实现未显示收益，因此撤回全部候选源码、测试和 CLI 扩展，保留 `008-tt-candidate.patch` 及原始日志。该结论不否定增量哈希等更便宜的 TT 实现；也没有单独剖析序列化、GC、图搜索的耗时，不能把总开销全部归因于某一项。
+
+恢复 `008-tt-candidate.patch` 后的复现命令：
+
+```bash
+bun scripts/mcts-benchmark.ts --games 12 --time-ms 120 --baseline mcts \
+  --tt --seed 20800000 --max-turns 180
+bun scripts/mcts-benchmark.ts --games 12 --playouts 500 --baseline mcts \
+  --tt --seed 20800000 --max-turns 180
+```
+
 ## 下一轮
 
-先检验 transposition table 的相同状态命中率及计算成本，再决定是否保留；随后分别测试更好的 rollout、截断局面 evaluation、heuristic prior/PUCT。已有贪心 rollout，不把它误记成尚未实现的能力。每项单独 benchmark，不一次叠加。
+TT 当前实现已撤回。随后独立测试截断局面 evaluation，再测 heuristic prior/PUCT；可另立实验比较更便宜的 TT 或新的 rollout。已有贪心 rollout，不把它误记成尚未实现的能力。每项单独 benchmark，不一次叠加。
 
 已知项目类型检查问题：`scripts/compare.ts` 引用了未定义的 `AbStats`（初始版本已有），不把这些既存错误当作本轮新回归。
