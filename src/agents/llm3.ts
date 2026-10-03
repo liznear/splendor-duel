@@ -12,9 +12,9 @@ import { llmAgent, stripAnsi, type LlmOptions } from './llm.js';
 import { digestV2 } from './llm2.js';
 import {
   effectiveCost, type Gem, type GameState, GEMS, legalMoves, type LegalMoves,
-  maxColorPointsOf, type NonGold, type PlayerState,
+  maxColorPointsOf, type NonGold, type PlayerState, type TokenColor,
 } from '../engine/game.js';
-import { ABILITY_ZH, actionText, GEM_ZH } from '../render.js';
+import { ABILITY_ZH, actionText, GEM_ZH, TOKEN_ZH } from '../render.js';
 
 // ---------------------------------------------------------------- 基础工具(纯函数, 供测试)
 
@@ -50,7 +50,7 @@ export function crossesWin(p: PlayerState, card: CardLike): string[] {
   return wins;
 }
 /** 买后是否触发皇家里程碑(3/6冠) */
-export function triggersRoyal(p: PlayerState, card: CardLike): boolean {
+function triggersRoyal(p: PlayerState, card: CardLike): boolean {
   return (p.royalsTaken === 0 && p.crowns + card.crowns >= 3) || (p.royalsTaken === 1 && p.crowns + card.crowns >= 6);
 }
 
@@ -133,7 +133,7 @@ export interface V3Memory {
   memoForTurn?: string;
   route?: { name: string; cardIds: string[]; sincePly: number };
 }
-export const createMemory = (): V3Memory => ({ lastPly: -1, snap: null, ledger: [], targetIds: [] });
+const createMemory = (): V3Memory => ({ lastPly: -1, snap: null, ledger: [], targetIds: [] });
 
 // ---------------------------------------------------------------- 分析块(全部为引擎状态推导的客观事实)
 
@@ -238,7 +238,7 @@ export function raceBlock(view: GameState, seat: 0 | 1): string[] {
 }
 
 /** 经济块: 特权/黄金/额外回合差 + ⚡ */
-export function economyBlock(view: GameState, seat: 0 | 1): string[] {
+function economyBlock(view: GameState, seat: 0 | 1): string[] {
   const me = view.players[seat]!, opp = view.players[1 - seat]!;
   const turnCards = (p: PlayerState) => p.cards.filter((c) => c.def.ability === 'turn').length;
   const myT = turnCards(me), opT = turnCards(opp);
@@ -250,7 +250,7 @@ export function economyBlock(view: GameState, seat: 0 | 1): string[] {
 }
 
 /** 牌库匹配: 未见高分卡按色 + 折扣溢出预警 */
-export function deckMatchBlock(view: GameState, seat: 0 | 1): string[] {
+function deckMatchBlock(view: GameState, seat: 0 | 1): string[] {
   const me = view.players[seat]!;
   const unseen = [...view.decks.flat(), ...view.pyramid].filter((c): c is CardLike => c !== null);
   const ptsByColor: Record<string, number> = {};
@@ -266,7 +266,7 @@ export function deckMatchBlock(view: GameState, seat: 0 | 1): string[] {
 }
 
 /** 安全阀: 是否有 1-2 回合内买得起的便宜卡 */
-export function valveLine(view: GameState, seat: 0 | 1): string {
+function valveLine(view: GameState, seat: 0 | 1): string {
   const me = view.players[seat]!;
   const pool = view.pyramid.filter((c): c is CardLike => c !== null);
   const near = pool.map((c) => ({ c, short: shortfall(me, c) })).filter((x) => x.short <= 2)
@@ -277,7 +277,7 @@ export function valveLine(view: GameState, seat: 0 | 1): string {
 }
 
 /** 补货/预留建议(阶段1) */
-export function optionalAdvice(view: GameState, seat: 0 | 1): string {
+function optionalAdvice(view: GameState, seat: 0 | 1): string {
   const me = view.players[seat]!, opp = view.players[1 - seat]!;
   const lm = legalMoves(view);
   const { targets, cands } = marketTargets(view, seat);
@@ -456,10 +456,14 @@ export function actionListV3(sim: GameState, seat: 0 | 1, lm: LegalMoves): strin
   const me = sim.players[seat]!;
   const lines: string[] = [];
   const seen = new Set<string>();
+  const has3 = lm.actions.some((a) => a.kind === 'take' && a.cells.length === 3);
   lm.actions.forEach((a, i) => {
     const s = stripAnsi(actionText(sim, seat, a));
     if (a.kind === 'take') {
-      lines.push(`${i + 1}. ${s}${giftsPrivilege(sim.board, a.cells) ? '  ⚠送对手1特权' : ''}`);
+      const toks = a.cells.map((c) => TOKEN_ZH[sim.board[c] as TokenColor]).join('');
+      lines.push(`${i + 1}. ${s} [${a.cells.length}个:${toks}]`
+        + `${a.cells.length < 3 && has3 ? ' ⚠低于3格(棋盘有3格线, 少拿=送经济, 除非双珍珠/凑特定缺口)' : ''}`
+        + `${giftsPrivilege(sim.board, a.cells) ? ' ⚠送对手1特权' : ''}`);
     } else if (a.kind === 'reserve') {
       const key = reserveKey(a);
       if (seen.has(key)) return;
@@ -607,7 +611,7 @@ const SYSTEM_PROMPT_V3 = `你是 Splendor Duel(璀璨宝石对决)棋手, 目标
 - 能力强度: 额外回合 >> 偷取(2宝石摆动) > 拿同色 > 特权. 额外回合卡出现在市场就认真考虑预留.
 - 皇家卡选择同理: 额外回合 > 偷取 > 3分 > 特权.
 [开局] 珍珠开局必抢(珍珠无法被折扣抵免). 后手标准强开局: 特权拿珍珠+预留皇冠卡(得黄金). 首购回合3-5, 最强首购=额外回合卡; 皇冠卡更多是被预留而非首购. 前5回合未买卡不慌, 但每回合必须有明确目的.
-[token纪律] 宝石是燃料不是财富, 攒4-5个却无下回合购买计划=浪费; 拿3异色优先, 且尽量让3色同时服务两张卡(主目标+顺路L1). 黄金是过桥不是存款, 1-2回合内花掉. 手里始终留1张随时买得起的便宜卡当"安全阀"【安全阀】块会检查. 拿3同色或2珍珠会送对手特权(列表已标⚠), 慎重. 超10弃置提前规划.
+[token纪律] 宝石是燃料不是财富, 攒4-5个却无下回合购买计划=浪费; 拿3异色优先(行动列表已标 [N个:色], 有3格线时选2格需明确理由如双珍珠/凑特定缺口), 且尽量让3色同时服务两张卡(主目标+顺路L1). 黄金是过桥不是存款, 1-2回合内花掉. 手里始终留1张随时买得起的便宜卡当"安全阀"【安全阀】块会检查. 拿3同色或2珍珠会送对手特权(列表已标⚠), 慎重. 超10弃置提前规划.
 [防守时机] 前5回合几乎不阻断(自建引擎优先); 中局只做双目的阻断; 危局(对手15分/7冠/单色7分)阻断升为一等公民. 三个具体防守: 对手要拿偷取卡=>先花掉珍珠; 对手下一买触发皇家卡=>用黄金预留那张皇冠卡; 对手能先你买走目标卡=>立即转向别再攒那色(【目标追踪】⚠即此情形).
 [胜利路线] 10-12回合前保持至少两条胜利路径(分/皇冠/单色)形成压力迫使对手分散防守, 之后全速冲一条; 领先抢节奏结束, 落后用封锁拖慢. 同色胜利多在中局自然形成: 6-7分时盯住该色高分卡和百搭卡(百搭能让颜色胜利从7跳到10).
 [v3数字规则] 折扣颜色跟随【牌库匹配】的剩余分分布, 单色折扣>3仅当明确走单色胜利线; 额外回合卡差≥2时市场新出的额外回合卡优先截; 对手outs≥2时放弃阻断全力抢跑; 对手单色/皇冠线≥6且有其≤2回合推进卡(【对手路线威胁】⚡)时必须处置; 任何时刻保持安全阀; 第15回合仍<8分立即转买分(【阶段判定】会提示).`;

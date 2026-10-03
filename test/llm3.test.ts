@@ -137,6 +137,11 @@ describe('llm3 行动列表', () => {
     const lm = legalMoves(st);
     const list = actionListV3(st, st.current, lm);
     expect(list).toMatch(/\[id \d-\d+\]/);
+    expect(list).toMatch(/\[\d+个:/);
+    if (lm.actions.some((a) => a.kind === 'take' && a.cells.length === 3)
+      && lm.actions.some((a) => a.kind === 'take' && a.cells.length < 3)) {
+      expect(list).toContain('⚠低于3格');
+    }
     // 预留去重: 黄金格数 × 卡数 远多于列出的预留行
     const resLines = list.split('\n').filter((l) => l.includes('黄金+预留'));
     const resActs = lm.actions.filter((a) => a.kind === 'reserve').length;
