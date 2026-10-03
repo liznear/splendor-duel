@@ -1,0 +1,12 @@
+bun test v1.3.10 (30e609e0)
+
+test/mcts-sim.test.ts:
+(pass) MCTS 截断评分 > 终局回报保持精确胜负 [3.00ms]
+(pass) MCTS 截断评分 > 无购买进展的拿取循环触发截断, 最终行动仍合法 [17.99ms]
+(pass) MCTS 截断评分 > 对称局面中立, 接近任一胜利路线时提高本方回报
+
+ 3 pass
+ 10 filtered out
+ 0 fail
+ 12 expect() calls
+Ran 3 tests across 1 file. [49.00ms]

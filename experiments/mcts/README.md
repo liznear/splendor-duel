@@ -36,6 +36,8 @@
 | 007-playouts | 同一候选排除模拟次数差异 | 对 004，同 500 次，其余同上 | 4 胜 8 负；平均每步 53ms vs 26ms | 未展示收益且成本增加；不进入独立种子复核 |
 | 008-time | 搜索内完整状态字符串 TT，共享相同状态节点 | 同版本开关，同 120ms，12 局，seed 20800000，上限 180 | 4 胜 8 负；命中率 7.41%；平均模拟 1826 vs 4774 次/步 | 撤回，此实现开销大于可见收益 |
 | 008-playouts | 同一 TT 候选排除模拟次数差异 | 同 500 次，其余同上 | 5 胜 7 负；命中率 4.01%；平均每步 31ms vs 26ms | 未达到保留门槛，不进入独立种子复核 |
+| 009-time | 仅替换 400 步截断时的回报为胜利路线进度评分 | 对 004，同 120ms，12 局，seed 20900000，上限 180 | 5 胜 7 负；20/1610430 次 rollout 截断（0.001242%） | 影响面不足，撤回 |
+| 009-playouts | 同一 leaf 候选排除模拟次数差异 | 同 500 次，其余同上 | 7 胜 5 负；3/206592 次截断（0.001452%）；平均每步双方均 25ms | 非稳定提升证据，不进入独立种子复核 |
 
 ## 007：被撤回的需求权重候选
 
@@ -71,8 +73,27 @@ bun scripts/mcts-benchmark.ts --games 12 --playouts 500 --baseline mcts \
   --tt --seed 20800000 --max-turns 180
 ```
 
+## 009：被撤回的 400 步 leaf evaluation
+
+基准 Git 见 `009-base-ref.txt`，唯一算法变量是截断回报。UCT、贪心 rollout 行动分数、特权购买规划、400 步上限与预算不变。新增 rolloutStarts/rolloutCuts 只用于确认实际影响面。
+
+最小评分：每方进度取 `max(points/20, crowns/10, maxColorPoints/10)`；回报为 `0.5 + (我方进度 - 对方进度)/2`，非终局限制在 `[0.01, 0.99]`。不计资源或预测购买，保持 root 视角互补；实际终局严格返回 0/1，包括最后一个 rollout 步骤产生的胜负。
+
+纯函数测试验证三条胜利路线、中立与视角互补、无副作用、终局边界；构造红宝石拿取/弃置/补货循环，使一次真实 agent 搜索确实发生截断，并校验返回行动合法。候选完整测试 76 项通过，失败测试日志与通过日志均归档。两轮对战均无和棋、触顶或非法行动。
+
+真实对局截断率仅约 0.0012%–0.0015%，同时间预算未显示收益，固定次数的 7–5 也不足以证明有效。墙钟轮次平均模拟数为 7565 vs 4514，但 evaluator 实际调用过少且双方局面分布/JIT/终局访问比例未控制，不能归因为 leaf 改进带来的加速。固定次数轮次双方平均耗时均 25ms。因此撤回全部候选源码、测试及 CLI 统计改动，只保留 `009-leaf-candidate.patch` 与记录；没有在此轮同时缩短 rollout。
+
+恢复候选 patch 后复现：
+
+```bash
+bun scripts/mcts-benchmark.ts --games 12 --time-ms 120 \
+  --baseline experiments/mcts/baseline-004.ts --seed 20900000 --max-turns 180
+bun scripts/mcts-benchmark.ts --games 12 --playouts 500 \
+  --baseline experiments/mcts/baseline-004.ts --seed 20900000 --max-turns 180
+```
+
 ## 下一轮
 
-TT 当前实现已撤回。随后独立测试截断局面 evaluation，再测 heuristic prior/PUCT；可另立实验比较更便宜的 TT 或新的 rollout。已有贪心 rollout，不把它误记成尚未实现的能力。每项单独 benchmark，不一次叠加。
+TT 和 400 步截断评价的当前实现均已撤回。下一项独立测试 heuristic prior/PUCT；若希望让 leaf evaluation 影响更多搜索，应另立缩短 rollout 的实验，再与相同截断深度的中立回报对照。可另立实验比较更便宜的 TT 或新的 rollout。已有贪心 rollout，不把它误记成尚未实现的能力。每项单独 benchmark，不一次叠加。
 
 已知项目类型检查问题：`scripts/compare.ts` 引用了未定义的 `AbStats`（初始版本已有），不把这些既存错误当作本轮新回归。

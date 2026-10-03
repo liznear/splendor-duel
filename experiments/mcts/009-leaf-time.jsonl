@@ -1,0 +1,13 @@
+{"game":1,"seed":20900000,"seat":0,"winner":"baseline","turns":62,"privilegeTokens":1}
+{"game":2,"seed":20900000,"seat":1,"winner":"baseline","turns":69,"privilegeTokens":3}
+{"game":3,"seed":20907919,"seat":0,"winner":"candidate","turns":79,"privilegeTokens":3}
+{"game":4,"seed":20907919,"seat":1,"winner":"candidate","turns":70,"privilegeTokens":1}
+{"game":5,"seed":20915838,"seat":0,"winner":"baseline","turns":68,"privilegeTokens":1}
+{"game":6,"seed":20915838,"seat":1,"winner":"candidate","turns":66,"privilegeTokens":5}
+{"game":7,"seed":20923757,"seat":0,"winner":"baseline","turns":68,"privilegeTokens":2}
+{"game":8,"seed":20923757,"seat":1,"winner":"baseline","turns":74,"privilegeTokens":2}
+{"game":9,"seed":20931676,"seat":0,"winner":"baseline","turns":72,"privilegeTokens":0}
+{"game":10,"seed":20931676,"seat":1,"winner":"baseline","turns":75,"privilegeTokens":5}
+{"game":11,"seed":20939595,"seat":0,"winner":"candidate","turns":71,"privilegeTokens":0}
+{"game":12,"seed":20939595,"seat":1,"winner":"candidate","turns":69,"privilegeTokens":3}
+{"summary":true,"baseline":"experiments/mcts/baseline-004.ts","options":{"timeMs":120,"seed":7},"baselineOptions":{"timeMs":120,"seed":7},"maxTurns":180,"games":12,"wins":[5,7],"draws":0,"cappedDraws":0,"illegal":0,"privilegeTokens":26,"moves":428,"baselineMoves":427,"rolloutStarts":1610430,"rolloutCuts":20,"rolloutCutRate":0.000012419043361089895,"playoutsPerMove":7565,"baselinePlayoutsPerMove":4514,"msPerMove":111,"baselineMsPerMove":111,"playoutsPerSecond":68055}
