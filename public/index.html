@@ -25,8 +25,8 @@
       <select id="h-bot">
         <option value="greedy">贪心bot</option>
         <option value="ab">αβbot(搜索)</option>
-        <option value="mcts" selected>MCTSbot(蒙特卡洛)</option>
-        <option value="par-mcts2">MCTSbot(并行)</option>
+        <option value="mcts">MCTSbot(蒙特卡洛)</option>
+        <option value="par-mcts2" selected>MCTSbot(并行)</option>
       </select>
     </label>
     <label>执子:
@@ -47,7 +47,7 @@
         <option value="greedy">贪心bot</option>
         <option value="ab">αβbot(搜索)</option>
         <option value="mcts">MCTSbot(蒙特卡洛)</option>
-        <option value="par-mcts2">MCTSbot(并行)</option>
+        <option value="par-mcts2" selected>MCTSbot(并行)</option>
       </select>
     </label>
     <label>后手 Agent:
@@ -55,7 +55,7 @@
         <option value="greedy">贪心bot</option>
         <option value="ab">αβbot(搜索)</option>
         <option value="mcts">MCTSbot(蒙特卡洛)</option>
-        <option value="par-mcts2">MCTSbot(并行)</option>
+        <option value="par-mcts2" selected>MCTSbot(并行)</option>
       </select>
     </label>
     <label class="search-only">搜索超时 秒 (αβbot/MCTS):
@@ -85,8 +85,14 @@
         <span>皇家卡:</span>
         <div id="pool-royal"></div>
       </div>
+      <div id="human-controls">
+        <div id="human-turn">
+          <div id="pick-bar" class="pick-bar hidden"></div>
+        </div>
+        <div id="move-error" class="error" role="alert"></div>
+      </div>
     </div>
-    <div class="col">
+    <div class="col market-col">
       <div id="pyramid"></div>
     </div>
     <div class="col players-col">
@@ -103,12 +109,6 @@
       <button id="btn-auto" class="primary">自动播放 ⏩</button>
       <label>速度 <input id="speed" type="range" min="100" max="2000" value="800" step="100"></label>
       <span id="turn-indicator"></span>
-    </div>
-    <div id="human-controls">
-      <div id="human-turn">
-        <div id="pick-bar" class="pick-bar"></div>
-        <div id="move-error" class="error"></div>
-      </div>
     </div>
   </div>
 </section>

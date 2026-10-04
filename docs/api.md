@@ -47,10 +47,16 @@ Resume defaults to recorded mode, human seat, and supported agent specs. Removed
 | `legal` | Legal action descriptions for the active requested seat, otherwise `null` |
 | `names` | Two player names |
 | `recentMoves` | Last 20 bot move visuals, cleared on human move |
+| `botSearch` | Two entries indexed by seat: latest completed MCTS search statistics, or `null` |
+| `botTimeoutMs` | Two configured search timeouts in milliseconds, indexed by seat; used for the frontend elapsed-time progress bar |
 | `notice`, `noticeSeat` | Forced replenishment notification, or `null` |
 | `pending` | Human-mode bot turn is due; call `/bot` |
 
 Legal is `{actions: [{i, action, desc}], canReplenish, mustReplenish, privilegeCells}`. `i` is descriptive, not a persistent action identifier. Submit the action itself. Optional actions immediately change the view and legal list; fetch/consume the new snapshot before constructing the mandatory move.
+
+Each `botSearch` entry is `{turn, simulations, moveSimulations, winRate}`. `turn` identifies the searched turn (one-based). `simulations` counts completed rollouts across all MCTS workers; `moveSimulations` counts those for the selected move. `winRate` is that move's average rollout reward from the bot's perspective, in `[0, 1]`, or `null` when no rollouts completed. Wins score 1, draws 0.5, and unfinished rollouts use a position evaluation, so this is an estimated win rate rather than a calibrated probability. Non-MCTS agents and players without a completed search have `null` entries. Statistics are retained for the current server session, including across human moves, but are not restored from saved game records.
+
+Move visuals include `action`, `privGems`, `replenished`, `replenishFirst`, `takeGems`, `card`, `refill`, `associateGem`, `takeSameGem`, `stealGems`, `royals`, and `deltas` when applicable. `replenishFirst` determines the order of replenishment and privileges; both precede the main action. Gem colors reflect the board after preceding optional actions. Ability results and earned royals include the engine's default choices, even when the submitted move omitted those choices. `stealGems` lists all gems actually stolen and `royals` lists all royal cards earned. The singular `stealGem` and `royal` fields remain as compatibility aliases for the first result. Card and royal `ability` fields identify extra-turn, privilege, steal, and same-color effects for the recap.
 
 The public `view` retains the browser model: `board` (25 colors/null), `bag` (colors), `decks` (three arrays of anonymous `{}` entries, exposing counts only), `pyramid` (12 cards/null), `royals`, `players` (two), `current`, `extraTurns`, `turnCount`, `winner`, `draw`, `log`. It omits seed and RNG state. Opponent blind reserved cards are `id: "hidden"` placeholders with only their level visible. Public pyramid reservations stay visible. Search samples unseen cards without reading the live deck order, actual shuffle state, or opponent blind cards.
 

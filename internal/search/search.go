@@ -11,15 +11,29 @@ import (
 )
 
 func Choose(ctx context.Context, s *game.State, c Config) (game.Move, error) {
+	move, _, err := ChooseWithStats(ctx, s, c)
+	return move, err
+}
+
+// Stats describes the last completed MCTS search from the acting player's perspective.
+// WinRate is the selected move's average rollout reward: wins score 1, draws .5,
+// and unfinished rollouts use the position evaluation. It is an estimate, not a calibrated probability.
+type Stats struct {
+	Simulations     int      `json:"simulations"`
+	MoveSimulations int      `json:"moveSimulations"`
+	WinRate         *float64 `json:"winRate"`
+}
+
+func ChooseWithStats(ctx context.Context, s *game.State, c Config) (game.Move, *Stats, error) {
 	if s.Over() {
-		return game.Move{}, errors.New("game over")
+		return game.Move{}, nil, errors.New("game over")
 	}
 	c, err := Normalize(c)
 	if err != nil {
-		return game.Move{}, err
+		return game.Move{}, nil, err
 	}
 	if ctx.Err() != nil {
-		return game.Move{}, ctx.Err()
+		return game.Move{}, nil, ctx.Err()
 	}
 	searchCtx, cancel := context.WithTimeout(ctx, time.Duration(c.TimeMS)*time.Millisecond)
 	defer cancel()
@@ -27,22 +41,26 @@ func Choose(ctx context.Context, s *game.State, c Config) (game.Move, error) {
 	v := position(s, r)
 	fallback, err := greedy(searchCtx, v)
 	if err != nil {
-		return game.Move{}, err
+		return game.Move{}, nil, err
+	}
+	var stats *Stats
+	if c.Kind == "mcts" {
+		stats = &Stats{}
 	}
 	if score(v, fallback) >= 1e9 || c.Kind == "greedy" {
 		if ctx.Err() != nil {
-			return game.Move{}, ctx.Err()
+			return game.Move{}, nil, ctx.Err()
 		}
-		return fallback, nil
+		return fallback, stats, nil
 	}
 	switch c.Kind {
 	case "alpha-beta":
 		fallback = alphaBeta(searchCtx, v, fallback)
 	case "mcts":
-		fallback = parallelMCTS(searchCtx, v, c.Parallelism, fallback)
+		fallback, stats = parallelMCTS(searchCtx, v, c.Parallelism, fallback)
 	}
 	if ctx.Err() != nil {
-		return game.Move{}, ctx.Err()
+		return game.Move{}, nil, ctx.Err()
 	}
-	return fallback, nil
+	return fallback, stats, nil
 }

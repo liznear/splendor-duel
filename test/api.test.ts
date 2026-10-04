@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+// @ts-expect-error 浏览器侧公共模块, 无类型声明
 import { agentConfig, requestFor, api } from '../public/api.js';
 
 describe('browser API adapter', () => {
@@ -19,17 +20,18 @@ describe('browser API adapter', () => {
   test('adapts v1 success and propagates server errors', async () => {
     const original = globalThis.fetch;
     try {
-      let actualPath, actualBody;
-      globalThis.fetch = async (path, options) => {
-        actualPath = path; actualBody = JSON.parse(options.body);
+      let actualPath: RequestInfo | URL | undefined;
+      let actualBody: unknown;
+      globalThis.fetch = Object.assign(async (path: RequestInfo | URL, options?: RequestInit) => {
+        actualPath = path; actualBody = JSON.parse(String(options?.body));
         return Response.json({ current: 1, pending: true });
-      };
+      }, { preconnect: original.preconnect });
       const body = { seat: 0, move: { action: { kind: 'take', cells: [0] } } };
       const result = await api('/api/move/g123', body);
       expect(actualPath).toBe('/api/v1/games/g123/moves');
       expect(actualBody).toEqual(body);
       expect(result.ok).toBe(true);
-      globalThis.fetch = async () => Response.json({ error: 'invalid turn', code: 'invalid_request' }, { status: 400 });
+      globalThis.fetch = Object.assign(async () => Response.json({ error: 'invalid turn', code: 'invalid_request' }, { status: 400 }), { preconnect: original.preconnect });
       await expect(api('/api/move/g123', body)).rejects.toThrow('invalid turn');
     } finally { globalThis.fetch = original; }
   });

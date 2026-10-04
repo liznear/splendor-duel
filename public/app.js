@@ -15,6 +15,7 @@ let G = null; // {id, mode, seat, view, legal, over, winner, draw, ...}
 // ui.pick: {t:'take',cells:[]} | {t:'card',slot,want} | {t:'deck',level,want} | {t:'buyRes',index} | null
 let ui = { pick: null, action: null, privileges: [], phase: 'main', replenish: false, takeSamePick: null, extras: {} };
 let autoTimer = null;
+let botThinking = null;
 
 function el(tag, cls, text) {
   const d = document.createElement(tag);
@@ -358,15 +359,46 @@ function startGame(payload) {
   render();
   if (payload.pending) {
     boardImagesSettled().then(() => {
-      api(`/api/bot/${G.id}`, {}).then((r) => {
+      requestBot(`/api/bot/${G.id}`).then((r) => {
         Object.assign(G, r);
         revealBotMove();
+      }).catch((err) => {
+        $('#move-error').textContent = err.message;
+        render();
       });
     });
   }
 }
 
 // ---------------- 渲染 ----------------
+function requestBot(path) {
+  if (botThinking) return botThinking.promise;
+  const seat = G.view.current;
+  const timeoutMs = G.botTimeoutMs?.[seat] ?? Number($(G.mode === 'human' ? '#h-search-ms' : '#a-search-ms').value) * 1000;
+  const thinking = { seat, startedAt: performance.now(), timeoutMs: Math.max(1, timeoutMs), timer: null, promise: null };
+  botThinking = thinking;
+  thinking.promise = api(path, {}).finally(() => {
+    clearInterval(thinking.timer);
+    if (botThinking === thinking) {
+      botThinking = null;
+      renderPlayers();
+    }
+  });
+  renderPlayers();
+  renderBotProgress();
+  thinking.timer = setInterval(renderBotProgress, 100);
+  return thinking.promise;
+}
+
+function renderBotProgress() {
+  if (!botThinking) return;
+  const row = $(`#players .player[data-seat="${botThinking.seat}"] .bot-progress`);
+  if (!row) return;
+  const fraction = Math.min(1, Math.max(0, (performance.now() - botThinking.startedAt) / botThinking.timeoutMs));
+  row.querySelector('progress').value = fraction;
+  row.querySelector('span').textContent = fraction === 1 ? '等待结果…' : `思考中 ${Math.floor(fraction * 100)}%`;
+}
+
 function render() {
   renderBoard();
   renderPyramid();
@@ -695,6 +727,7 @@ function renderPlayers() {
     const p = G.view.players[s];
     const mine = G.mode === 'human' && s === G.seat;
     const card = el('div', 'player');
+    card.dataset.seat = String(s);
     if (G.view.current === s && !G.over) card.classList.add('active');
 
     const head = el('div', 'p-head');
@@ -702,18 +735,35 @@ function renderPlayers() {
     const stats = el('div', 'p-stats');
     stats.append(el('span', '', '积分'), span('pts', String(p.points)));
     stats.append(el('span', '', '皇冠'), span('cr', `♛${p.crowns}`));
-    stats.append(el('span', '', `特权×${p.privileges}`));
-    if (p.royals.length) stats.append(el('span', '', `皇家×${p.royals.length}`));
-    head.append(stats);
-    // 使用特权按钮就在特权数量旁 (右侧玩家栏)
+    // 数量本身就是使用特权的入口。
     if (mine && myTurn() && p.privileges > 0 && G.legal.privilegeCells.length > 0) {
       const b = el('button', 'opt-chip');
-      b.append(span('', `💎 使用特权`));
-      b.title = '每枚特权可从棋盘拿 1 个非金 token';
+      b.append(span('', `💎 特权×${p.privileges}`));
+      b.title = '使用特权 · 每枚特权可从棋盘拿 1 个非金 token';
+      b.setAttribute('aria-label', `使用特权，剩余 ${p.privileges} 枚`);
       b.addEventListener('click', () => { ui.privileges = []; ui.phase = 'priv'; render(); });
-      head.append(b);
-    }
+      stats.append(b);
+    } else stats.append(el('span', '', `特权×${p.privileges}`));
+    head.append(stats);
     card.append(head);
+
+    const search = el('div', 'bot-search');
+    if (botThinking?.seat === s) {
+      const progress = el('div', 'bot-progress');
+      const bar = el('progress');
+      bar.max = 1;
+      bar.value = 0;
+      bar.setAttribute('aria-label', 'Bot 思考耗时进度');
+      progress.append(span('', '思考中 0%'), bar);
+      search.append(progress);
+      search.title = '根据本次请求的耗时与搜索 timeout 计算';
+    } else if (!mine) {
+      const metrics = G.botSearch?.[s];
+      const rate = metrics?.winRate == null ? '—' : `${(metrics.winRate * 100).toFixed(1)}%`;
+      search.append(span('', metrics ? `上次搜索 · 模拟 ${metrics.simulations.toLocaleString()} · 估计胜率 ${rate}` : '模拟 — · 估计胜率 —'));
+      search.title = metrics ? `第 ${metrics.turn} 回合的搜索；胜率为本方所选走法的模拟估计，基于 ${metrics.moveSimulations} 次模拟` : '完成 MCTS 搜索后显示模拟次数和本方估计胜率';
+    }
+    card.append(search);
 
     const tokens = el('div', 'tokens');
     const colors = ALL_COLORS.filter((c) => p.tokens[c] > 0);
@@ -726,14 +776,14 @@ function renderPlayers() {
     }
     card.append(tokens);
 
+    const royals = el('div', 'cards-line');
+    royals.append(el('span', 'lab', '皇家卡:'));
     if (p.royals.length) {
-      const royals = el('div', 'cards-line');
-      royals.append(el('span', 'lab', '皇家卡:'));
       const minis = el('div', 'minicards');
       p.royals.forEach((r) => minis.append(miniRoyal(r)));
       royals.append(minis);
-      card.append(royals);
-    }
+    } else royals.append(el('span', 'hint', '无'));
+    card.append(royals);
 
     // 每色已购卡: 折扣 + 累计分 (同色 10 分即胜)
     const cardsLine = el('div', 'cards-line');
@@ -790,6 +840,7 @@ function renderPlayers() {
     card.append(reserved);
     box.append(card);
   }
+  renderBotProgress();
 }
 
 function renderBanner() {
@@ -850,6 +901,7 @@ function discardExcess() {
 
 function renderActionbar() {
   const turn = myTurn();
+  $('#actionbar').classList.toggle('hidden', G.mode !== 'agents');
   // 被迫补货提示: 展示至人类提交走法 (服务端清空)
   const notice = $('#notice');
   notice.classList.toggle('hidden', !G.notice);
@@ -862,10 +914,10 @@ function renderActionbar() {
 
   const pick = $('#pick-bar');
   pick.replaceChildren();
+  pick.classList.toggle('hidden', !(ui.pick || ui.action || ui.hint));
 
   // 当前选择进度
   if (ui.pick?.t === 'take') {
-    pick.append(el('b', '', `拿 ${ui.pick.cells.length} 枚:`));
     for (const i of ui.pick.cells) {
       const tok = el('span', 'tok');
       tok.append(gemEl(G.view.board[i]), span('n', cellName(i)));
@@ -878,15 +930,12 @@ function renderActionbar() {
       const go = el('button', 'primary', `拿 ${ui.pick.cells.length} 枚 ✓`);
       go.title = 'Enter 也可提交 · 点已选格可取消';
       go.addEventListener('click', () => afterActionChosen());
-      if (takeExtendable()) pick.append(go, el('span', 'hint', '可继续加点 / 点已选取消'));
-      else pick.append(go);
+      pick.append(go);
     }
   } else if (ui.pick?.want === 'reserve') {
     pick.append(el('span', 'error-inline', '← 点击棋盘上要拿的黄金 token'));
   } else if (ui.action) {
     pick.append(el('span', 'ok-inline', '✓ 提交中…'));
-  } else {
-    pick.append(el('span', 'hint', '💡 点棋盘格拿 token (直线相邻, 选满自动提交) · 点卡片买/留 · 点牌库盲留'));
   }
   if (ui.hint) { pick.append(el('span', 'error-inline', ui.hint)); ui.hint = ''; }
 
@@ -1034,24 +1083,68 @@ function gemsRow(gems) {
 
 function botMoveRow(v) {
   const r = el('div', 'bot-move');
-  const a = v.action;
+  const step = (label, ...content) => {
+    const row = el('div', 'bm-step');
+    row.append(span('bm-number', String(r.children.length + 1)));
+    const body = el('div', 'bm-step-body');
+    body.append(span('bm-lab', label), ...content);
+    row.append(body);
+    r.append(row);
+    return body;
+  };
+  const privilege = () => {
+    if (v.privGems?.length) step('使用特权', span('bm-extra', `消耗 ${v.privGems.length} 枚特权`), gemsRow(v.privGems));
+  };
+  const replenish = () => {
+    if (v.replenished) step('补充棋盘', span('bm-extra', '从袋中回填空格 · 你获得 1 枚特权'));
+  };
+  if (v.replenishFirst) { replenish(); privilege(); }
+  else { privilege(); replenish(); }
+  const a = v.action ?? {};
+  let main;
   if (a.kind === 'take') {
-    r.append(el('span', 'bm-lab', '拿取'), gemsRow(v.takeGems));
-    r.append(botTakeBoard(v)); // 高亮显示拿取位置
+    main = step('拿取宝石', gemsRow(v.takeGems), botTakeBoard(v));
   } else if (a.kind === 'reserve') {
-    r.append(el('span', 'bm-lab', '预留'));
-    r.append(v.card ? miniCard(v.card, null, true) : miniBack(), gemEl('gold'));
-  } else if (v.card) {
-    r.append(el('span', 'bm-lab', '购买'), miniCard(v.card, null, true));
+    main = step('预留卡牌', v.card ? miniCard(v.card, null, true) : miniBack(), span('bm-extra', '获得黄金'), gemsRow(['gold']));
+  } else if (a.kind === 'buy' && v.card) {
+    main = step('购买卡牌', miniCard(v.card, v.associateGem, true));
   }
-  if (v.refill) r.append(el('span', 'bm-extra', '补位 →'), miniCard(v.refill, null, true));
-  if (v.privGems?.length) r.append(el('span', 'bm-lab', '特权'), gemsRow(v.privGems));
-  if (v.replenished) r.append(el('span', 'bm-extra', '🔄 补货'));
-  if (v.stealGem) r.append(el('span', 'bm-extra', '偷取'), gemEl(v.stealGem));
-  if (v.takeSameGem) r.append(el('span', 'bm-extra', '拿同色'), gemEl(v.takeSameGem));
-  if (v.associateGem) r.append(el('span', 'bm-extra', '叠色'), gemEl(v.associateGem));
-  if (v.royal) r.append(el('span', 'bm-extra', '领皇家卡'), miniRoyal(v.royal));
-  if (v.deltas) r.append(deltasRow(v.deltas));
+  if (v.refill && main) {
+    const refill = el('div', 'bm-refill');
+    refill.append(span('bm-extra', '市场空位补入'), miniCard(v.refill, null, true));
+    main.append(refill);
+  }
+  if (v.associateGem) step('百搭叠色', span('bm-extra', '叠放到已有折扣颜色'), gemsRow([v.associateGem]));
+  const royals = v.royals ?? (v.royal ? [v.royal] : []);
+  const stealSources = Number(a.kind === 'buy' && v.card?.ability === 'steal') + royals.filter(royal => royal.ability === 'steal').length;
+  const combinedSteal = stealSources > 1;
+  const ability = (source, kind) => {
+    if (!kind) return;
+    const labels = { turn: '额外回合', privilege: '获得特权', steal: '偷取', takeSame: '拿同色' };
+    const descriptions = {
+      turn: '接下来继续行动一回合',
+      privilege: '触发获得 1 枚特权的效果（上限 3 枚）',
+      steal: combinedSteal ? '尝试从你手中偷取 1 枚非黄金宝石（合计结果见下方）' : v.stealGem ? '从你手中偷取 1 枚宝石' : '你没有可偷取的非黄金宝石',
+      takeSame: v.takeSameGem ? '从棋盘额外拿取 1 枚同色宝石' : '棋盘没有可拿取的同色宝石',
+    };
+    const body = step(`${source} · ${labels[kind] ?? ABZH[kind] ?? kind}`, span('bm-extra', descriptions[kind] ?? ''));
+    const gem = kind === 'steal' && !combinedSteal ? v.stealGem : kind === 'takeSame' ? v.takeSameGem : null;
+    if (gem) body.append(gemsRow([gem]));
+  };
+  if (a.kind === 'buy') ability('卡牌能力', v.card?.ability);
+  for (const royal of royals) {
+    step('领取皇家卡', miniRoyal(royal));
+    ability('皇家能力', royal.ability);
+  }
+  if (combinedSteal) {
+    const stolen = v.stealGems ?? (v.stealGem ? [v.stealGem] : []);
+    step('偷取结果', span('bm-extra', stolen.length ? `共偷取 ${stolen.length} 枚宝石` : '你没有可偷取的非黄金宝石'), gemsRow(stolen));
+  }
+  if (v.deltas) {
+    const summary = el('div', 'bm-summary');
+    summary.append(span('bm-extra', '本次变化'), deltasRow(v.deltas));
+    r.append(summary);
+  }
   return r;
 }
 
@@ -1115,7 +1208,7 @@ async function submitMove() {
     ui = freshUi();
     render(); // 先立刻展示己方操作结果
     if (res.pending) {
-      const r2 = await api(`/api/bot/${G.id}`, {});
+      const r2 = await requestBot(`/api/bot/${G.id}`);
       Object.assign(G, r2);
       revealBotMove();
     }
@@ -1145,7 +1238,7 @@ addEventListener('keydown', (e) => {
 // ---------------- Agent 对战控制 ----------------
 $('#btn-step').addEventListener('click', async () => {
   if (G.over) return;
-  const res = await api(`/api/step/${G.id}`, {});
+  const res = await requestBot(`/api/step/${G.id}`);
   Object.assign(G, res);
   render();
 });
@@ -1155,8 +1248,9 @@ $('#btn-auto').addEventListener('click', () => {
   $('#btn-auto').textContent = '停止 ⏹';
   autoTimer = setInterval(async () => {
     if (G.over) { stopAuto(); return; }
+    if (botThinking) return;
     try {
-      const res = await api(`/api/step/${G.id}`, {});
+      const res = await requestBot(`/api/step/${G.id}`);
       Object.assign(G, res);
       render();
       if (G.over) stopAuto();

@@ -8,6 +8,6 @@
     "test": "go test ./...",
     "test:race": "go test -race ./...",
     "test:e2e": "bun test test/web.e2e.test.ts",
-    "test:ui": "bun test test/api.test.ts test/preview.test.ts"
+    "test:ui": "bun test test/api.test.ts test/preview.test.ts test/player-layout.test.ts"
   }
 }

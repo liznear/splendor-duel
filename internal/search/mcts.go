@@ -105,7 +105,7 @@ func mcts(ctx context.Context, s *game.State, seed uint64) []rootStat {
 	}
 	return out
 }
-func parallelMCTS(ctx context.Context, s *game.State, workers int, fallback game.Move) game.Move {
+func parallelMCTS(ctx context.Context, s *game.State, workers int, fallback game.Move) (game.Move, *Stats) {
 	results := make(chan []rootStat, workers)
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -134,8 +134,10 @@ func parallelMCTS(ctx context.Context, s *game.State, workers int, fallback game
 	}
 	visits := 0
 	wins := float64(-1)
+	stats := &Stats{}
 	for _, key := range order {
 		r := merged[key]
+		stats.Simulations += r.visits
 		if r.visits > visits || r.visits == visits && r.wins > wins {
 			visits = r.visits
 			wins = r.wins
@@ -144,7 +146,12 @@ func parallelMCTS(ctx context.Context, s *game.State, workers int, fallback game
 			}
 		}
 	}
-	return fallback
+	stats.MoveSimulations = visits
+	if visits > 0 {
+		rate := wins / float64(visits)
+		stats.WinRate = &rate
+	}
+	return fallback, stats
 }
 func moveKey(m game.Move) string {
 	return fmt.Sprintf("%s:%v:%d:%s:%d:%d:%d:%v", m.Action.Kind, m.Action.Cells, m.Action.GoldCell, m.Action.From.Kind, m.Action.From.Slot, m.Action.From.Index, m.Action.From.Level, m.Privileges)

@@ -20,6 +20,7 @@ type match struct {
 	mode       string
 	human      int
 	feed       []Visual
+	botSearch  [2]*BotSearch
 	notice     *string
 	noticeSeat *int
 	recorder   *session.Recorder
@@ -343,7 +344,7 @@ func (s *Service) run(m *match, j *job, human bool) {
 			err = s.ctx.Err()
 			return
 		}
-		move, chooseErr := search.Choose(s.ctx, state, agent)
+		move, stats, chooseErr := search.ChooseWithStats(s.ctx, state, agent)
 		<-s.slots
 		if chooseErr != nil {
 			err = chooseErr
@@ -357,6 +358,9 @@ func (s *Service) run(m *match, j *job, human bool) {
 		m.mu.Lock()
 		err = m.recorder.Write(session.Event{Type: "move", Seat: state.Current, Turn: state.Turn, Move: &move})
 		if err == nil {
+			if stats != nil {
+				m.botSearch[state.Current] = &BotSearch{Simulations: stats.Simulations, MoveSimulations: stats.MoveSimulations, WinRate: stats.WinRate, Turn: state.Turn + 1}
+			}
 			m.feed = append(m.feed, visual(state, next, move))
 			if len(m.feed) > 20 {
 				m.feed = m.feed[len(m.feed)-20:]
