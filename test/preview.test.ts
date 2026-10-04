@@ -2,7 +2,6 @@
 import { describe, expect, test } from 'bun:test';
 // @ts-expect-error 浏览器侧公共模块, 无类型声明
 import { previewTokens, excessOf } from '../public/preview.js';
-import { paymentFor } from '../src/engine/game.js';
 
 const tokens = (o: Record<string, number> = {}) => ({ white: 0, blue: 0, green: 0, red: 0, black: 0, pearl: 0, gold: 0, ...o });
 const sum = (t: Record<string, number>) => Object.values(t).reduce((s, n) => s + n, 0);
@@ -34,15 +33,14 @@ describe('previewTokens', () => {
     expect(t.red).toBe(5); // 2 + 刚拿的 3
   });
 
-  test('支付用黄金补缺口, 与引擎 paymentFor 总量一致', () => {
+  test('支付用黄金补缺口: 1 黑 + 1 金, 剩余 2 金', () => {
     const me = me10();
     me.tokens = tokens({ black: 1, gold: 3 }); // 欠 1 黑用黄金
     const card = { ...takeSameCard, ability: null, color: null, cost: { white: 0, blue: 0, green: 0, red: 0, black: 2, pearl: 0 } };
     const t = previewTokens(me, opp(), Array(25).fill(null), { kind: 'buy' }, card);
-    const paid = sum(paymentFor({ tokens: me.tokens, bonuses: me.bonuses } as never, card as never));
     expect(t.black).toBe(0);
     expect(t.gold).toBe(2);
-    expect(sum(t)).toBe(4 - paid);
+    expect(sum(t)).toBe(2);
   });
 
   test('偷取卡: +1 对手珍珠 (未选色默认珍珠)', () => {

@@ -7,9 +7,7 @@
     "web": "go run ./cmd/server",
     "test": "go test ./...",
     "test:race": "go test -race ./...",
-    "test:reference": "bun test test/engine.test.ts test/preview.test.ts test/mcts-sim.test.ts test/mcts2.test.ts test/resume.test.ts",
     "test:e2e": "bun test test/web.e2e.test.ts",
-    "fixtures": "bun scripts/engine-fixtures.ts",
-    "test:ui": "bun test test/api.test.ts"
+    "test:ui": "bun test test/api.test.ts test/preview.test.ts"
   }
 }

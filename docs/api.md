@@ -72,7 +72,7 @@ All cell, slot, and reserved-card indices are zero-based. Deck level is 1–3. M
 
 Mutations require the configured human seat and the current turn. State reads do not advance games or write session results. Repeated calls during the same bot/step search share that operation. A later step request, after completion, intentionally starts another turn. There is no streaming or `botMessage` field.
 
-Go session records retain the original event format and add an optional `names` event when a resumed game changes agent names. The TypeScript replay reference also understands this event.
+Go session records retain the original event format and add an optional `names` event when a resumed game changes agent names.
 
 ## Compatibility and evolution
 
