@@ -5,7 +5,6 @@ import {
   type GameState, type Move,
 } from './engine/game.js';
 import { fallbackMove } from './agents/random.js';
-import { renderState, logTail } from './render.js';
 import { GameRecorder, type RecMeta } from './recorder.js';
 
 export interface MatchOptions {
@@ -81,7 +80,7 @@ export async function playMatch(
     let move: Move;
     try {
       move = await agent.chooseMove(ctx);
-      recorder?.move(seat, state.turnCount, move, undefined, agent.lastRaw || undefined);
+      recorder?.move(seat, state.turnCount, move);
       state = applyMove(state, move);
     } catch (err) {
       illegalCount++;

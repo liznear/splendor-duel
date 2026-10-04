@@ -1,0 +1,22 @@
+[
+  {
+    "id": "royal_1",
+    "points": 2,
+    "ability": "steal"
+  },
+  {
+    "id": "royal_2",
+    "points": 2,
+    "ability": "privilege"
+  },
+  {
+    "id": "royal_3",
+    "points": 2,
+    "ability": "turn"
+  },
+  {
+    "id": "royal_4",
+    "points": 3,
+    "ability": null
+  }
+]

@@ -23,19 +23,11 @@
   <div id="setup-human" class="setup-body">
     <label>对手 Agent:
       <select id="h-bot">
-        <option value="llm">LLM</option>
-        <option value="llm2">LLM2(改进版)</option>
-        <option value="llm3">LLM3(分析增强)</option>
         <option value="greedy">贪心bot</option>
-        <option value="random">随机bot</option>
         <option value="ab">αβbot(搜索)</option>
-        <option value="mcts">MCTSbot(蒙特卡洛)</option>
-        <option value="mcts2" selected>MCTS2bot(子树复用)</option>
-        <option value="par-mcts2">ParMCTS2bot(8worker并行)</option>
+        <option value="mcts" selected>MCTSbot(蒙特卡洛)</option>
+        <option value="par-mcts2">MCTSbot(并行)</option>
       </select>
-    </label>
-    <label class="llm-only">模型 (可选, 如 anthropic/claude-sonnet-4-5):
-      <input id="h-model" placeholder="留空用默认模型">
     </label>
     <label>执子:
       <select id="h-seat">
@@ -53,31 +45,18 @@
     <label>先手 Agent:
       <select id="a-p1">
         <option value="greedy">贪心bot</option>
-        <option value="llm">LLM</option>
-        <option value="llm2">LLM2(改进版)</option>
-        <option value="llm3">LLM3(分析增强)</option>
-        <option value="random">随机bot</option>
         <option value="ab">αβbot(搜索)</option>
         <option value="mcts">MCTSbot(蒙特卡洛)</option>
-        <option value="mcts2">MCTS2bot(子树复用)</option>
-        <option value="par-mcts2">ParMCTS2bot(8worker并行)</option>
+        <option value="par-mcts2">MCTSbot(并行)</option>
       </select>
     </label>
     <label>后手 Agent:
       <select id="a-p2">
-        <option value="random">随机bot</option>
         <option value="greedy">贪心bot</option>
-        <option value="llm">LLM</option>
-        <option value="llm2">LLM2(改进版)</option>
-        <option value="llm3">LLM3(分析增强)</option>
         <option value="ab">αβbot(搜索)</option>
         <option value="mcts">MCTSbot(蒙特卡洛)</option>
-        <option value="mcts2">MCTS2bot(子树复用)</option>
-        <option value="par-mcts2">ParMCTS2bot(8worker并行)</option>
+        <option value="par-mcts2">MCTSbot(并行)</option>
       </select>
-    </label>
-    <label class="llm-only">LLM 模型 (可选):
-      <input id="a-model" placeholder="provider/model, 留空用默认">
     </label>
     <label class="search-only">搜索超时 秒 (αβbot/MCTS):
       <input id="a-search-ms" type="number" min="1" max="120" step="1" value="20">
@@ -126,10 +105,6 @@
       <span id="turn-indicator"></span>
     </div>
     <div id="human-controls">
-      <div id="bot-msg" class="hidden">
-        <button id="bot-msg-toggle" class="ghost">🤖 LLM 输出 ▸</button>
-        <pre id="bot-msg-body" class="hidden"></pre>
-      </div>
       <div id="human-turn">
         <div id="pick-bar" class="pick-bar"></div>
         <div id="move-error" class="error"></div>

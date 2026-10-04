@@ -1,6 +1,7 @@
 // 前端主逻辑 (DOM API 构建, 无 innerHTML)
 // 交互模型: 直接点击棋盘格/卡片构建走法, 与 legalMoves 匹配后提交
 import { previewTokens, excessOf } from './preview.js';
+import { api } from './api.js';
 const $ = (s) => document.querySelector(s);
 const TZH = { white: '白', blue: '蓝', green: '绿', red: '红', black: '黑', pearl: '珠', gold: '金' };
 const TCSS = { white: 't-white', blue: 't-blue', green: 't-green', red: 't-red', black: 't-black', pearl: 't-pearl', gold: 't-gold' };
@@ -14,15 +15,6 @@ let G = null; // {id, mode, seat, view, legal, over, winner, draw, ...}
 // ui.pick: {t:'take',cells:[]} | {t:'card',slot,want} | {t:'deck',level,want} | {t:'buyRes',index} | null
 let ui = { pick: null, action: null, privileges: [], phase: 'main', replenish: false, takeSamePick: null, extras: {} };
 let autoTimer = null;
-
-async function api(path, body) {
-  const r = await fetch(path, body ? {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-  } : undefined);
-  const j = await r.json();
-  if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
-  return j;
-}
 
 function el(tag, cls, text) {
   const d = document.createElement(tag);
@@ -312,23 +304,16 @@ if (hashFile) {
   api('/api/resume', { file: hashFile }).then(startGame).catch(() => { /* 文件不存在则留在设置页 */ });
 }
 
-function llmSpec(sel, modelInput) {
-  const v = $(sel).value;
-  if (v !== 'llm' && v !== 'llm2' && v !== 'llm3') return v;
-  const m = $(modelInput).value.trim();
-  return m ? `${v}:${m}` : v;
-}
-
 /** 搜索型 bot 的 spec: 拼上界面里配置的每步超时秒数 (默认 20s) */
 function searchSpec(sel, msInput) {
   const v = $(sel).value;
-  if (v !== 'ab' && v !== 'mcts' && v !== 'mcts2' && v !== 'par-mcts2') return v;
+  if (v !== 'ab' && v !== 'mcts' && v !== 'par-mcts2') return v;
   const ms = Math.max(1, Number($(msInput).value) || 20) * 1000;
   return `${v}@${ms}`;
 }
 
 $('#btn-start').addEventListener('click', async () => {
-  const spec = searchSpec('#h-bot', '#h-search-ms') || llmSpec('#h-bot', '#h-model');
+  const spec = searchSpec('#h-bot', '#h-search-ms');
   const seat = Number($('#h-seat').value);
   const payload = await api('/api/new', {
     mode: 'human',
@@ -340,7 +325,7 @@ $('#btn-start').addEventListener('click', async () => {
 });
 
 $('#btn-start-agents').addEventListener('click', async () => {
-  const spec = (sel) => searchSpec(sel, '#a-search-ms') || llmSpec(sel, '#a-model');
+  const spec = (sel) => searchSpec(sel, '#a-search-ms');
   const payload = await api('/api/new', { mode: 'agents', p1: spec('#a-p1'), p2: spec('#a-p2') });
   startGame(payload);
 });
@@ -348,25 +333,7 @@ $('#btn-start-agents').addEventListener('click', async () => {
 $('#btn-new').addEventListener('click', () => { location.hash = ''; location.reload(); });
 $('#logo').addEventListener('click', () => { location.hash = ''; location.reload(); }); // 回主页(丢掉 hash, 不自动续局)
 
-/** 等 bot 走完期间轮询 /api/state, 实时刷新 LLM 思考流 */
-async function awaitBot(request) {
-  const poll = setInterval(async () => {
-    try {
-      const s = await api(`/api/state/${G.id}?seat=${G.seat}`);
-      if (s.botMessage && s.botMessage.text !== G.botMessage?.text) {
-        G.botMessage = s.botMessage;
-        renderActionbar();
-      }
-    } catch { /* 轮询失败忽略, 等 bot 请求返回 */ }
-  }, 800);
-  try {
-    return await request;
-  } finally {
-    clearInterval(poll);
-  }
-}
-
-/** 等对局首屏图片加载/失败完成(带超时兜底); ab 同步搜索会堵死服务器, 须先取图再调 /api/bot */
+/** 等对局首屏图片加载/失败完成(带超时兜底); 首屏渲染完成后再调 /api/bot */
 function boardImagesSettled(timeoutMs = 2000) {
   const pending = [...document.querySelectorAll('#game img')].filter((i) => !i.complete);
   if (!pending.length) return Promise.resolve();
@@ -391,7 +358,7 @@ function startGame(payload) {
   render();
   if (payload.pending) {
     boardImagesSettled().then(() => {
-      awaitBot(api(`/api/bot/${G.id}`, {})).then((r) => {
+      api(`/api/bot/${G.id}`, {}).then((r) => {
         Object.assign(G, r);
         revealBotMove();
       });
@@ -888,18 +855,6 @@ function renderActionbar() {
   notice.classList.toggle('hidden', !G.notice);
   notice.textContent = G.notice ?? '';
   $('#human-turn').classList.toggle('hidden', !turn);
-  // LLM bot 原始输出: 有则显示 toggle (思考中/回合中均可展开)
-  const bm = $('#bot-msg');
-  bm.classList.toggle('hidden', !G.botMessage);
-  if (G.botMessage) {
-    const body = $('#bot-msg-body');
-    // 流式自动滚底: 仅当用户没有上翻(离底部近)时跟随, 不打断回看
-    const stick = botMsgOpen && body.scrollHeight - body.scrollTop - body.clientHeight < 30;
-    $('#bot-msg-toggle').textContent = `🤖 ${G.botMessage.name} 输出 ${botMsgOpen ? '▾' : '▸'}`;
-    body.textContent = G.botMessage.text;
-    body.classList.toggle('hidden', !botMsgOpen);
-    if (stick) body.scrollTop = body.scrollHeight;
-  }
   if (G.mode === 'agents') {
     $('#turn-indicator').textContent = G.over ? '对局结束' : `第 ${G.view.turnCount + 1} 回合 · 轮到 ${G.names[G.view.current]}`;
   }
@@ -1139,9 +1094,6 @@ function colorBtn(code, onPick, picked) {
   return b;
 }
 
-let botMsgOpen = false;
-$('#bot-msg-toggle').addEventListener('click', () => { botMsgOpen = !botMsgOpen; render(); });
-
 /** 提交走法: 附加字段已在新弹窗中选好 */
 async function submitMove() {
   if (!ui.action) return;
@@ -1163,7 +1115,7 @@ async function submitMove() {
     ui = freshUi();
     render(); // 先立刻展示己方操作结果
     if (res.pending) {
-      const r2 = await awaitBot(api(`/api/bot/${G.id}`, {}));
+      const r2 = await api(`/api/bot/${G.id}`, {});
       Object.assign(G, r2);
       revealBotMove();
     }

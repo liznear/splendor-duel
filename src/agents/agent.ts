@@ -10,8 +10,6 @@ export interface TurnContext {
 
 export interface Agent {
   readonly name: string;
-  /** LLM agent: 最近一次模型原始输出 (UI 展示用) */
-  lastRaw?: string;
   /** 每回合调用一次; 必须返回合法 Move(引擎仍会校验) */
   chooseMove(ctx: TurnContext): Promise<Move>;
   /** 对局结束通知(可选) */

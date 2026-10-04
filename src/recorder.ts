@@ -1,4 +1,4 @@
-// 对局级会话记录: 每局一个 JSONL (sessions/), 记 seed + 双方每步事件 + LLM 思考.
+// 对局级会话记录: 每局一个 JSONL (sessions/), 记 seed + 双方每步事件.
 // resume 原理: 引擎随机性全部走 mulberry32(seed), 同 seed + 同事件序列 => 状态完全可重放.
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
@@ -21,7 +21,7 @@ export interface RecMeta {
 
 /** 会话文件首行 */
 export type SessionMeta = RecMeta & { t: 'meta'; started: string };
-export type SessionEvent = { t: 'option' | 'move' | 'replenish' | 'result' } & Record<string, unknown>;
+export type SessionEvent = { t: 'option' | 'move' | 'replenish' | 'result' | 'names' } & Record<string, unknown>;
 
 const sessionsDir = () => join(process.cwd(), 'sessions');
 const fileSafe = (s: string) => s.replace(/[^\w.-]+/g, '_').slice(0, 24) || 'x';
@@ -42,8 +42,8 @@ export class GameRecorder {
     this.write({ t: 'option', seat, ...(privileges?.length ? { privileges } : {}), ...(replenish ? { replenish: true } : {}) });
   }
 
-  move(seat: 0 | 1, turn: number, move: Move, desc?: string, thinking?: string) {
-    this.write({ t: 'move', seat, turn, move, ...(desc ? { desc } : {}), ...(thinking ? { thinking } : {}) });
+  move(seat: 0 | 1, turn: number, move: Move, desc?: string) {
+    this.write({ t: 'move', seat, turn, move, ...(desc ? { desc } : {}) });
   }
 
   /** 无强制行动时的引擎自动补货(消耗随机数, 重放必须包含) */
@@ -87,6 +87,7 @@ export function replayGame(meta: SessionMeta, events: SessionEvent[]): GameState
     if (e.t === 'option') st = applyOption(st, { privileges: e.privileges as number[] | undefined, replenish: e.replenish === true });
     else if (e.t === 'move') st = applyMove(st, e.move as Move);
     else if (e.t === 'replenish') st = applyReplenish(st);
+    else if (e.t === 'names') (e.names as [string, string]).forEach((name, i) => { st.players[i]!.name = name; });
   };
   for (const e of r ? r.events : []) apply(e);
   for (const e of events) apply(e);
