@@ -89,18 +89,19 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 .cell.picked { border-color: var(--brass-hi); box-shadow: 0 0 0 2px var(--brass-hi); }
 .pools { display: flex; gap: 12px; margin-top: 10px; font-size: 13px; color: var(--dim); align-items: center; flex-wrap: wrap; }
 .pools b { color: var(--ink); }
+#pool-bag { contain: inline-size; }
 .pools-royal { margin-top: 8px; align-items: flex-start; }
 #pool-royal { display: grid; grid-template-columns: repeat(2, auto); gap: 8px; }
 
 /* 皇家卡 */
 .royal { position: relative; display: inline-flex; background: var(--panel); border: 1px solid #c9b3e8; color: #4a3868; border-radius: 9px; padding: 3px; cursor: pointer; font-size: 12px; transition: box-shadow .12s; }
 .royal:hover { box-shadow: 0 0 0 2px var(--brass-hi); }
-.royal img { width: 72px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 7px; display: block; }
+.royal img { width: 96px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 7px; display: block; }
 .royal.picked { box-shadow: 0 0 0 2px var(--brass-hi); border-color: var(--brass-hi); }
 .royal.none { cursor: default; border-style: dashed; color: var(--faint); padding: 4px 9px; }
 
 /* ---------- 玩家 ---------- */
-.player { display: grid; grid-template-rows: 52px 20px 30px minmax(0, .7fr) 30px minmax(0, 1fr); gap: 5px; height: 100%; min-height: 0; overflow: auto; background: var(--panel2); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; transition: opacity .2s, border-color .2s, box-shadow .2s; }
+.player { display: grid; grid-template-rows: 52px 20px 30px auto auto minmax(0, 1fr); gap: 5px; height: 100%; min-height: 0; overflow: auto; background: var(--panel2); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; transition: opacity .2s, border-color .2s, box-shadow .2s; }
 .bot-search { min-width: 0; overflow-x: auto; white-space: nowrap; font-size: 12px; color: var(--dim); }
 .bot-progress { display: flex; align-items: center; gap: 8px; height: 20px; color: var(--brass-ink); }
 .bot-progress progress { flex: 1; min-width: 0; height: 7px; accent-color: var(--brass-hi); }
@@ -118,7 +119,7 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 .tok .n { font-family: var(--serif); font-size: 15px; font-weight: 600; }
 .tok input { border: none; background: transparent; font-family: var(--serif); font-size: 13px; width: 34px; text-align: center; padding: 0; outline: none; color: var(--ink); }
 .tok.cchip .n { font-family: var(--sans); font-size: 14px; font-weight: 600; }
-.player .cards-line { min-width: 0; overflow-x: auto; font-size: 14px; color: var(--dim); display: flex; align-items: center; gap: 5px; }
+.player .cards-line { min-width: 0; font-size: 14px; color: var(--dim); display: flex; align-items: center; gap: 5px; flex-wrap: wrap; row-gap: 4px; }
 .player .cards-line .lab { flex-shrink: 0; }
 .player .minicards { flex: 1; flex-wrap: nowrap; min-width: 0; overflow-x: auto; padding: 3px; }
 .player .mini { flex-shrink: 0; }
@@ -181,7 +182,6 @@ body:has(#game:not(.hidden)) > header { flex-shrink: 0; }
 .players-col .minicards { height: 100%; align-items: center; }
 .players-col .tokens, .players-col .cards-line { overflow-y: hidden; scrollbar-width: none; }
 .players-col .mini { height: min(100%, 114px); width: auto; max-width: 76px; }
-.players-col .mini.rroyal { height: min(100%, 66px); max-width: 44px; }
 #game > #banner { flex-shrink: 0; margin-bottom: 0; }
 @media (max-width: 1250px) { .layout { grid-template-columns: auto 1fr; } #game .layout { grid-template-rows: repeat(2, minmax(0, 1fr)); } .col.players-col { grid-column: 1 / -1; } }
 @media (max-width: 880px) { .layout { grid-template-columns: minmax(0, 1fr); } #game .layout { grid-template-rows: repeat(3, minmax(0, 1fr)); } .board { grid-template-columns: 14px repeat(5, minmax(40px, 54px)); grid-template-rows: 14px repeat(5, minmax(40px, 54px)); } .cell .gem { width: 26px; height: 26px; } }

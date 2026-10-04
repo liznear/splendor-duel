@@ -843,9 +843,11 @@ function renderPlayers() {
     const royals = el('div', 'cards-line');
     royals.append(el('span', 'lab', '皇家卡:'));
     if (p.royals.length) {
-      const minis = el('div', 'minicards');
-      p.royals.forEach((r) => minis.append(miniRoyal(r)));
-      royals.append(minis);
+      const pts = p.royals.reduce((s, r) => s + r.points, 0);
+      const chip = el('span', 'tok cchip');
+      chip.append(span('n', `×${p.royals.length} · ${pts}分`));
+      chip.title = p.royals.map((r) => `皇家卡 ${r.points}分${r.ability ? ` · ${ABZH[r.ability]}` : ''}`).join('；');
+      royals.append(chip);
     } else royals.append(el('span', 'hint', '无'));
     card.append(royals);
 
