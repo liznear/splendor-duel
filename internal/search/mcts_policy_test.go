@@ -99,7 +99,7 @@ func TestMCTSFiltersTakesOnEachReplenishmentBoard(t *testing.T) {
 	s := replenishmentWinPosition()
 	s.Board = [25]game.Color{}
 	s.Board[24] = "blue"
-	s.Bag = []game.Color{"red", "green", "black", "white"}
+	s.Bag = []game.Color{"red", "green", "black", "white", "blue"}
 	s.Players[0].Privileges = 0
 	sim := importSim(s)
 	var scratch [simMaxMoves]simMove
@@ -189,7 +189,7 @@ func TestMCTSReplenishedSmallerTakesAvoidPrivilege(t *testing.T) {
 	s := replenishmentWinPosition()
 	s.Board = [25]game.Color{}
 	s.Board[24] = "blue"
-	s.Bag = []game.Color{"red", "red", "red", "red"}
+	s.Bag = []game.Color{"red", "red", "red", "red", "red"}
 	s.Players[0].Privileges = 0
 	sim := importSim(s)
 	var scratch [simMaxMoves]simMove

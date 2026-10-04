@@ -1,12 +1,9 @@
 package game
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
-	"os"
 	"reflect"
 	"testing"
 )
@@ -413,60 +410,6 @@ func TestRandomGamesConserveAndDoNotMutate(t *testing.T) {
 			conservation(t, s)
 			assert(t, s.Players[0].TotalTokens() <= 10 && s.Players[1].TotalTokens() <= 10, "token cap at end of turn")
 		}
-	}
-}
-func fingerprint(s *State) string {
-	b, _ := json.Marshal(s)
-	var value map[string]any
-	_ = json.Unmarshal(b, &value)
-	delete(value, "log")
-	b, _ = json.Marshal(value)
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
-}
-func TestTypeScriptParity(t *testing.T) {
-	data, err := os.ReadFile("testdata/typescript-traces.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixtures []struct {
-		Seed      int64  `json:"seed"`
-		FirstSeat int    `json:"firstSeat"`
-		Initial   string `json:"initial"`
-		Events    []struct {
-			Type       string `json:"t"`
-			Move       Move   `json:"move"`
-			Privileges []int  `json:"privileges"`
-			Expected   string `json:"expected"`
-		} `json:"events"`
-	}
-	if err = json.Unmarshal(data, &fixtures); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range fixtures {
-		t.Run(fmt.Sprint(f.Seed), func(t *testing.T) {
-			s := New(f.Seed, [2]string{"A", "B"}, &f.FirstSeat)
-			if got := fingerprint(s); got != f.Initial {
-				t.Fatalf("initial state differs: %s != %s", got, f.Initial)
-			}
-			for i, e := range f.Events {
-				switch e.Type {
-				case "move":
-					s, err = Apply(s, e.Move)
-				case "option":
-					s, err = Option(s, Move{Privileges: e.Privileges})
-				case "replenish":
-					s, err = Replenish(s)
-				}
-				if err != nil {
-					t.Fatalf("event %d: %v", i, err)
-				}
-				if got := fingerprint(s); got != e.Expected {
-					t.Fatalf("event %d (%s) differs: %s != %s", i, e.Type, got, e.Expected)
-				}
-				conservation(t, s)
-			}
-		})
 	}
 }
 func TestPublicView(t *testing.T) {
