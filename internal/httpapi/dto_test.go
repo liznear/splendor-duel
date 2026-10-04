@@ -92,3 +92,26 @@ func TestSnapshotReportsLatestBotSearch(t *testing.T) {
 		t.Fatal("state endpoint lost search stats or invented stats for greedy agent", err)
 	}
 }
+
+func TestVisualSeparatesPaymentFromNetTokenChanges(t *testing.T) {
+	first := 0
+	s := game.New(42, [2]string{"Bot", "Human"}, &first)
+	steal := "steal"
+	s.Pyramid[0] = &game.Card{ID: "test", Color: "blue", Ability: &steal, Cost: game.Counts{"blue": 3, "white": 1}}
+	s.Board[0] = "blue"
+	s.Players[0].Privileges = 1
+	s.Players[0].Tokens = game.Counts{"blue": 1, "white": 1, game.Gold: 2}
+	s.Players[1].Tokens = game.Counts{"blue": 1}
+	m := game.Move{Privileges: []int{0}, Action: game.Action{Kind: "buy", From: game.Source{Kind: "pyramid", Slot: 0}}}
+	n, err := game.Apply(s, m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := visual(s, n, m)
+	if v.Payment["blue"] != 2 || v.Payment["white"] != 1 || v.Payment[game.Gold] != 1 {
+		t.Fatalf("payment must include privileged gems and gold substitution: %v", v.Payment)
+	}
+	if v.TokenChanges["blue"] != 0 || v.TokenChanges["white"] != -1 || v.TokenChanges[game.Gold] != -1 || v.Deltas.Tokens != -2 {
+		t.Fatalf("net changes must include privilege and steal effects: %v", v.TokenChanges)
+	}
+}

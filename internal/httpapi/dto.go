@@ -64,6 +64,8 @@ type Visual struct {
 	TakeSameGem    game.Color   `json:"takeSameGem,omitempty"`
 	Refill         *game.Card   `json:"refill,omitempty"`
 	Deltas         Delta        `json:"deltas"`
+	Payment        game.Counts  `json:"payment,omitempty"`
+	TokenChanges   game.Counts  `json:"tokenChanges,omitempty"`
 	Replenished    bool         `json:"replenished,omitempty"`
 	ReplenishFirst bool         `json:"replenishFirst,omitempty"`
 }
@@ -140,6 +142,7 @@ func visual(before, after *game.State, m game.Move) Visual {
 	}
 	if a.Kind == "buy" && len(n.Cards) > len(p.Cards) {
 		owned := n.Cards[len(n.Cards)-1]
+		v.Payment = game.Payment(mainBoard.Players[before.Current], owned.Def)
 		if owned.Def.Associate {
 			v.AssociateGem = owned.Color
 		}
@@ -150,6 +153,12 @@ func visual(before, after *game.State, m game.Move) Visual {
 					break
 				}
 			}
+		}
+	}
+	v.TokenChanges = game.Counts{}
+	for _, color := range game.Colors {
+		if change := n.Tokens[color] - p.Tokens[color]; change != 0 {
+			v.TokenChanges[color] = change
 		}
 	}
 	v.Deltas = Delta{n.Points - p.Points, n.Crowns - p.Crowns, n.Privileges - p.Privileges, n.TotalTokens() - p.TotalTokens(), len(n.Cards) - len(p.Cards)}

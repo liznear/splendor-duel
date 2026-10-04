@@ -10,7 +10,13 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
   const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   const css = readFileSync(new URL('../public/style.css', import.meta.url), 'utf8');
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-  const functions = ['el', 'span', 'gemEl', 'cardTitle', 'cardBack', 'miniCard', 'miniBack', 'miniRoyal', 'renderPlayers', 'renderActionbar', 'gemsRow', 'botMoveRow', 'botTakeBoard', 'deltasRow', 'requestBot', 'renderBotProgress'].map((name) => {
+  const reservedCardImage = readFileSync(new URL('../public/cards/1-25.png', import.meta.url)).toString('base64');
+  const functions = [
+    'el', 'span', 'gemEl', 'cardTitle', 'cardBack', 'miniCard', 'miniBack', 'miniRoyal',
+    'renderPlayers', 'renderActionbar', 'gemsRow', 'tokenCountsRow', 'botMoveRow',
+    'botTakeBoard', 'deltasRow', 'requestBot', 'renderBotProgress', 'modalHead',
+    'modalDragButton', 'positionModal', 'resetModalPosition',
+  ].map((name) => {
     const start = source.indexOf(`function ${name}(`);
     const firstLine = source.slice(start, source.indexOf('\n', start));
     if (firstLine.endsWith('}')) return firstLine;
@@ -29,6 +35,8 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
       const ui = { privileges: [], extras: {}, phase: 'main' };
       const render = () => {};
       let botThinking = null;
+      let modalPosition = null;
+      const closeModal = () => {};
       let finishBot, failBot;
       const api = () => new Promise((resolve, reject) => { finishBot = resolve; failBot = reject; });
       const myTurn = () => G.mode === 'human' && G.view.current === G.seat && !G.over;
@@ -38,6 +46,29 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
       document.querySelector('#setup').classList.add('hidden');
       const results = [];
       const check = (ok, message) => { if (!ok) results.push(message); };
+      const modal = $('#modal-box');
+      modal.style.animation = 'none';
+      modalHead(modal, '拖动测试');
+      modal.append(el('p', '', '查看弹窗后的棋盘信息'));
+      $('#modal-root').classList.remove('hidden');
+      const handle = modal.querySelector('.modal-drag');
+      check(!!handle && !!modal.querySelector('.modal-x'), 'modal header must offer drag and close buttons');
+      // Synthetic pointer events have no browser-managed capture; stub capture only.
+      handle.setPointerCapture = () => {};
+      const initialModal = modal.getBoundingClientRect();
+      handle.dispatchEvent(new PointerEvent('pointerdown', {pointerId: 1, isPrimary: true, button: 0, clientX: 100, clientY: 100}));
+      handle.dispatchEvent(new PointerEvent('pointermove', {pointerId: 1, clientX: 125, clientY: 135}));
+      check(Math.abs(modal.getBoundingClientRect().left - initialModal.left - 25) < 1 && Math.abs(modal.getBoundingClientRect().top - initialModal.top - 35) < 1, 'drag handle must move the modal by the pointer distance');
+      handle.dispatchEvent(new PointerEvent('pointermove', {pointerId: 1, clientX: 10000, clientY: 10000}));
+      check(modal.getBoundingClientRect().right <= innerWidth - 7 && modal.getBoundingClientRect().bottom <= innerHeight - 7, 'modal drag must keep the dialog within the viewport');
+      handle.dispatchEvent(new PointerEvent('pointerup', {pointerId: 1}));
+      check(!modal.classList.contains('dragging'), 'releasing the pointer must end dragging');
+      handle.dispatchEvent(new KeyboardEvent('keydown', {key: 'Home'}));
+      check(!modalPosition && !modal.classList.contains('moved'), 'Home must return the modal to its centered position');
+      handle.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowLeft'}));
+      check(modalPosition && Math.abs(modal.getBoundingClientRect().left - initialModal.left + 10) < 1, 'keyboard arrow keys must move the modal');
+      resetModalPosition(modal);
+      $('#modal-root').classList.add('hidden');
       G.botTimeoutMs = [1000, 1000];
       G.view.current = 0;
       const pendingBot = requestBot('/api/bot/test');
@@ -77,6 +108,12 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
         }
       }
       check(!botMoveRow({action: {kind: 'reserve'}, card: {id: 'test', ability: 'turn'}}).textContent.includes('卡牌能力'), 'reserving a card must not show its ability as activated');
+      const purchase = botMoveRow({action: {kind: 'buy'}, card: {id: 'test'}, payment: {blue: 2, white: 1, gold: 1}, tokenChanges: {blue: 0, white: -1, gold: -1, pearl: 1}, deltas: {tokens: -1}});
+      check(purchase.querySelector('.bm-payment').textContent.includes('蓝 ×2') && purchase.querySelector('.bm-payment').textContent.includes('金 ×1'), 'purchase recap must identify each paid gem color and count');
+      const tokenChanges = purchase.querySelector('.bm-token-changes');
+      check(tokenChanges.textContent.includes('白 −1') && tokenChanges.textContent.includes('金 −1') && tokenChanges.textContent.includes('珠 +1'), 'recap must show color-specific positive and negative token changes');
+      check(!tokenChanges.textContent.includes('蓝'), 'unchanged token colors must be omitted from net changes');
+      check(botMoveRow({action: {kind: 'buy'}, card: {id: 'free'}, payment: {}}).textContent.includes('无需支付宝石'), 'free purchases must show that no gems were paid');
       const reverseRecap = botMoveRow({action: {kind: 'take', cells: []}, privGems: ['blue'], replenished: true, replenishFirst: true});
       check([...reverseRecap.querySelectorAll('.bm-step .bm-lab')].map(e => e.textContent).join('|') === '补充棋盘|使用特权|拿取宝石', 'recap must respect replenish-first moves');
       for (const count of [3, 4, 5]) {
@@ -114,6 +151,18 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
         check(button?.textContent.includes('特权×1'), 'privilege count must be part of its action button');
         button?.click();
         check(ui.phase === 'priv', 'privilege button must open privilege selection');
+        G.view.players.forEach(p => { p.reserved = [{id: 'single', color: 'white', cost: {blue: 3}}]; });
+        renderPlayers();
+        const reservedImages = [...$('#players').querySelectorAll('.minicards img')];
+        await Promise.all(reservedImages.map(img => {
+          img.src = 'data:image/png;base64,${reservedCardImage}';
+          return img.decode();
+        }));
+        $('#players').querySelectorAll('.minicards').forEach(minis => {
+          check(minis.scrollWidth <= minis.clientWidth, 'single reserved card must not create horizontal scrolling at width ' + width);
+          const availableWidth = minis.parentElement.clientWidth - minis.parentElement.querySelector('.lab').getBoundingClientRect().width - 5;
+          check(minis.clientWidth >= Math.floor(availableWidth) - 1, 'reserved card container must use the available row width rather than shrink to the image at width ' + width);
+        });
         for (const p of G.view.players) {
           p.reserved = Array.from({length: 3}, () => ({ id: 'hidden' }));
           p.royals = [{ id: 'r1', points: 3 }, { id: 'r2', points: 3 }];

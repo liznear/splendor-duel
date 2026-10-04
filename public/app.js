@@ -16,6 +16,7 @@ let G = null; // {id, mode, seat, view, legal, over, winner, draw, ...}
 let ui = { pick: null, action: null, privileges: [], phase: 'main', replenish: false, takeSamePick: null, extras: {} };
 let autoTimer = null;
 let botThinking = null;
+let modalPosition = null;
 
 function el(tag, cls, text) {
   const d = document.createElement(tag);
@@ -430,6 +431,66 @@ function renderModals() {
     show = true;
   }
   root.classList.toggle('hidden', !show);
+  if (!show) resetModalPosition(box);
+  else if (modalPosition) positionModal(box, modalPosition.x, modalPosition.y);
+}
+
+function positionModal(box, x, y) {
+  box.classList.add('moved');
+  const bounds = box.getBoundingClientRect();
+  const left = Math.max(8, Math.min(x, innerWidth - bounds.width - 8));
+  const top = Math.max(8, Math.min(y, innerHeight - bounds.height - 8));
+  box.style.left = `${left}px`;
+  box.style.top = `${top}px`;
+  modalPosition = { x: left, y: top };
+}
+
+function resetModalPosition(box) {
+  modalPosition = null;
+  box.classList.remove('moved', 'dragging');
+  box.style.removeProperty('left');
+  box.style.removeProperty('top');
+}
+
+function modalDragButton(box) {
+  const handle = el('button', 'modal-drag', '✥');
+  handle.title = '拖动弹窗（方向键移动，Home 居中）';
+  handle.setAttribute('aria-label', '拖动弹窗');
+  let drag = null;
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !e.isPrimary) return;
+    e.preventDefault();
+    handle.focus({ preventScroll: true });
+    const bounds = box.getBoundingClientRect();
+    drag = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, left: bounds.left, top: bounds.top };
+    positionModal(box, bounds.left, bounds.top);
+    box.classList.add('dragging');
+    handle.setPointerCapture(e.pointerId);
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    positionModal(box, drag.left + e.clientX - drag.x, drag.top + e.clientY - drag.y);
+  });
+  const stop = (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    drag = null;
+    box.classList.remove('dragging');
+    if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
+  };
+  handle.addEventListener('pointerup', stop);
+  handle.addEventListener('pointercancel', stop);
+  handle.addEventListener('lostpointercapture', stop);
+  handle.addEventListener('keydown', (e) => {
+    if (e.key === 'Home') { e.preventDefault(); resetModalPosition(box); return; }
+    const directions = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+    const direction = directions[e.key];
+    if (!direction) return;
+    e.preventDefault();
+    const bounds = box.getBoundingClientRect();
+    const distance = e.shiftKey ? 40 : 10;
+    positionModal(box, bounds.left + direction[0] * distance, bounds.top + direction[1] * distance);
+  });
+  return handle;
 }
 
 function modalHead(box, title) {
@@ -438,7 +499,9 @@ function modalHead(box, title) {
   const x = el('button', 'modal-x', '✕');
   x.title = '关闭 (Esc)';
   x.addEventListener('click', closeModal);
-  head.append(x);
+  const actions = el('div', 'modal-head-actions');
+  actions.append(modalDragButton(box), x);
+  head.append(actions);
   box.append(head);
 }
 
@@ -502,6 +565,7 @@ function renderPhaseModal(box) {
 
 /** 卡片放大详情: 左侧大图, 右侧操作按钮 */
 function renderCardDialog(box) {
+  modalHead(box, '卡牌详情');
   const me = G.view.players[G.seat];
   const wrap = el('div', 'card-dialog');
   const imgBox = el('div', 'cd-img');
@@ -1081,6 +1145,19 @@ function gemsRow(gems) {
   return row;
 }
 
+function tokenCountsRow(counts, signed = false) {
+  const row = el('span', 'bm-gems bm-counts');
+  for (const color of ALL_COLORS) {
+    const n = counts?.[color] ?? 0;
+    if (!n) continue;
+    const count = signed ? `${n > 0 ? '+' : '−'}${Math.abs(n)}` : `×${n}`;
+    const chip = span(signed ? `bm-count bm-delta ${n > 0 ? 'up' : 'down'}` : 'bm-count tok');
+    chip.append(gemEl(color), span('', `${TZH[color]} ${count}`));
+    row.append(chip);
+  }
+  return row;
+}
+
 function botMoveRow(v) {
   const r = el('div', 'bot-move');
   const step = (label, ...content) => {
@@ -1108,6 +1185,13 @@ function botMoveRow(v) {
     main = step('预留卡牌', v.card ? miniCard(v.card, null, true) : miniBack(), span('bm-extra', '获得黄金'), gemsRow(['gold']));
   } else if (a.kind === 'buy' && v.card) {
     main = step('购买卡牌', miniCard(v.card, v.associateGem, true));
+    if (v.payment) {
+      const payment = el('div', 'bm-payment');
+      const counts = tokenCountsRow(v.payment);
+      payment.append(span('bm-extra', counts.childElementCount ? '支付' : '无需支付宝石'));
+      if (counts.childElementCount) payment.append(counts);
+      main.append(payment);
+    }
   }
   if (v.refill && main) {
     const refill = el('div', 'bm-refill');
@@ -1143,6 +1227,12 @@ function botMoveRow(v) {
   if (v.deltas) {
     const summary = el('div', 'bm-summary');
     summary.append(span('bm-extra', '本次变化'), deltasRow(v.deltas));
+    const changes = tokenCountsRow(v.tokenChanges, true);
+    if (changes.childElementCount) {
+      const tokens = el('div', 'bm-token-changes');
+      tokens.append(span('bm-extra', '宝石净变化'), changes);
+      summary.append(tokens);
+    }
     r.append(summary);
   }
   return r;
@@ -1233,6 +1323,9 @@ $('#modal-root').addEventListener('click', (e) => {
 });
 addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !$('#modal-root').classList.contains('hidden')) closeModal();
+});
+addEventListener('resize', () => {
+  if (modalPosition) positionModal($('#modal-box'), modalPosition.x, modalPosition.y);
 });
 
 // ---------------- Agent 对战控制 ----------------
