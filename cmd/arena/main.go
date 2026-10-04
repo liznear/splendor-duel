@@ -22,9 +22,17 @@ type result struct {
 	err    error
 }
 
-func play(ctx context.Context, index int, seed int64, agents [2]search.Config) result {
+func play(ctx context.Context, index int, seed int64, agents [2]search.Config, reuse bool) result {
 	first := 0
 	s := game.New(seed, [2]string{"A", "B"}, &first)
+	var sess [2]*search.Session
+	if reuse {
+		for i := range agents {
+			if agents[i].Kind == "mcts" {
+				sess[i] = search.NewSession(agents[i].Parallelism)
+			}
+		}
+	}
 	for turns := 0; turns < 600 && !s.Over(); turns++ {
 		l := game.LegalMoves(s)
 		if l.MustReplenish {
@@ -37,14 +45,30 @@ func play(ctx context.Context, index int, seed int64, agents [2]search.Config) r
 			if err != nil {
 				return result{index: index, err: err}
 			}
+			for _, x := range sess {
+				if x != nil {
+					x.Reset()
+				}
+			}
 		}
-		m, err := search.Choose(ctx, s, agents[s.Current])
+		var m game.Move
+		var err error
+		if sess[s.Current] != nil {
+			m, _, err = sess[s.Current].Choose(ctx, s, agents[s.Current])
+		} else {
+			m, err = search.Choose(ctx, s, agents[s.Current])
+		}
 		if err != nil {
 			return result{index: index, err: err}
 		}
 		s, err = game.Apply(s, m)
 		if err != nil {
 			return result{index: index, err: err}
+		}
+		for _, x := range sess {
+			if x != nil {
+				x.Step(m)
+			}
 		}
 	}
 	return result{index, s.Winner, s.Draw || s.Winner == nil, s.Turn, nil}
@@ -55,6 +79,7 @@ func main() {
 	aSpec := flag.String("a", "mcts@1000", "subject agent")
 	bSpec := flag.String("baseline", "greedy", "baseline agent")
 	seed := flag.Int64("seed", 1000, "first game seed")
+	reuse := flag.Bool("reuse", true, "retain MCTS subtrees across turns")
 	flag.Parse()
 	if *games < 1 || *jobs < 1 {
 		log.Fatal("games and jobs must be positive")
@@ -81,7 +106,7 @@ func main() {
 				if i%2 == 1 {
 					agents = [2]search.Config{b, a}
 				}
-				results <- play(ctx, i, *seed+int64(i)*7919, agents)
+				results <- play(ctx, i, *seed+int64(i)*7919, agents, *reuse)
 			}
 		}()
 	}

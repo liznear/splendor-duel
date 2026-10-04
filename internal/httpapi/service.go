@@ -17,6 +17,7 @@ type match struct {
 	mu         sync.Mutex
 	state      *game.State
 	agents     [2]search.Config
+	mcts       [2]*search.Session
 	mode       string
 	human      int
 	feed       []Visual
@@ -139,6 +140,11 @@ func (s *Service) create(req CreateRequest, record *session.Record, resumed stri
 		}
 	}
 	m := &match{state: state, agents: req.Players, mode: req.Mode, human: human, feed: []Visual{}, recorder: rec}
+	for i := range m.agents {
+		if m.agents[i].Kind == "mcts" {
+			m.mcts[i] = search.NewSession(m.agents[i].Parallelism)
+		}
+	}
 	if err = m.ensurePlayable(); err != nil {
 		return Snapshot{}, err
 	}
@@ -208,6 +214,7 @@ func (m *match) ensurePlayable() error {
 		return err
 	}
 	m.state = next
+	m.resetMCTS()
 	notice := "🔄 " + next.Log[len(next.Log)-1]
 	seat := next.Current
 	m.notice = &notice
@@ -223,6 +230,20 @@ func (m *match) recordResult() error {
 		outcome = fmt.Sprintf("p%d", *m.state.Winner)
 	}
 	return m.recorder.Write(session.Event{Type: "result", Outcome: outcome, Turns: m.state.Turn})
+}
+func (m *match) stepMCTS(move game.Move) {
+	for _, sess := range m.mcts {
+		if sess != nil {
+			sess.Step(move)
+		}
+	}
+}
+func (m *match) resetMCTS() {
+	for _, sess := range m.mcts {
+		if sess != nil {
+			sess.Reset()
+		}
+	}
 }
 func (m *match) humanTurn(seat int) error {
 	if m.mode != "human" {
@@ -263,6 +284,7 @@ func (s *Service) Move(id string, seat int, move game.Move) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	m.state = next
+	m.stepMCTS(move)
 	m.feed = []Visual{}
 	m.notice = nil
 	m.noticeSeat = nil
@@ -292,6 +314,7 @@ func (s *Service) Option(id string, seat int, move game.Move) (Snapshot, error) 
 		return Snapshot{}, err
 	}
 	m.state = next
+	m.resetMCTS()
 	if err = m.ensurePlayable(); err != nil {
 		return Snapshot{}, err
 	}
@@ -350,7 +373,14 @@ func (s *Service) run(m *match, j *job, human bool) {
 			err = s.ctx.Err()
 			return
 		}
-		move, stats, chooseErr := search.ChooseWithStats(s.ctx, state, agent)
+		var move game.Move
+		var stats *search.Stats
+		var chooseErr error
+		if sess := m.mcts[state.Current]; sess != nil {
+			move, stats, chooseErr = sess.Choose(s.ctx, state, agent)
+		} else {
+			move, stats, chooseErr = search.ChooseWithStats(s.ctx, state, agent)
+		}
 		<-s.slots
 		if chooseErr != nil {
 			err = chooseErr
@@ -376,6 +406,7 @@ func (s *Service) run(m *match, j *job, human bool) {
 				m.feed = m.feed[len(m.feed)-20:]
 			}
 			m.state = next
+			m.stepMCTS(move)
 			err = m.ensurePlayable()
 		}
 		m.mu.Unlock()
