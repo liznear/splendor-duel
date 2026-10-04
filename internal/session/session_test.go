@@ -19,9 +19,15 @@ func TestRecordReplayAndResumeChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := game.New(42, meta.Names, &first)
+	rate := .625
+	stats := &SearchStats{Simulations: 100, MoveSimulations: 40, WinRate: &rate}
 	for i := 0; i < 8; i++ {
 		m := game.Move{Action: game.LegalMoves(s).Actions[0]}
-		if err = rec.Write(Event{Type: "move", Seat: s.Current, Turn: s.Turn, Move: &m}); err != nil {
+		event := Event{Type: "move", Seat: s.Current, Turn: s.Turn, Move: &m}
+		if i == 0 {
+			event.Search = stats
+		}
+		if err = rec.Write(event); err != nil {
 			t.Fatal(err)
 		}
 		s, err = game.Apply(s, m)
@@ -32,6 +38,9 @@ func TestRecordReplayAndResumeChain(t *testing.T) {
 	r, err := store.Read(rec.File())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(r.Events[0].Search, stats) || r.Events[1].Search != nil {
+		t.Fatal("search statistics did not round-trip")
 	}
 	replayed, err := r.Replay()
 	if err != nil || !reflect.DeepEqual(replayed, s) {
@@ -55,6 +64,9 @@ func TestRecordReplayAndResumeChain(t *testing.T) {
 		r, err = store.Read(rec.File())
 		if err != nil {
 			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(r.Prefix()[0].Search, stats) {
+			t.Fatal("resume prefix lost search statistics")
 		}
 		replayed, err = r.Replay()
 		if err != nil || !reflect.DeepEqual(replayed, s) {

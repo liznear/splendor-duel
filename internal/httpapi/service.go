@@ -172,6 +172,9 @@ func spec(c search.Config) string {
 	if c.Kind == "greedy" {
 		return kind
 	}
+	if c.IncludeRefill {
+		kind += "+refill"
+	}
 	return fmt.Sprintf("%s@%d", kind, c.TimeMS)
 }
 func (s *Service) get(id string) (*match, error) {
@@ -359,7 +362,11 @@ func (s *Service) run(m *match, j *job, human bool) {
 			return
 		}
 		m.mu.Lock()
-		err = m.recorder.Write(session.Event{Type: "move", Seat: state.Current, Turn: state.Turn, Move: &move})
+		event := session.Event{Type: "move", Seat: state.Current, Turn: state.Turn, Move: &move}
+		if stats != nil {
+			event.Search = &session.SearchStats{Simulations: stats.Simulations, MoveSimulations: stats.MoveSimulations, WinRate: stats.WinRate}
+		}
+		err = m.recorder.Write(event)
 		if err == nil {
 			if stats != nil {
 				m.botSearch[state.Current] = &BotSearch{Simulations: stats.Simulations, MoveSimulations: stats.MoveSimulations, WinRate: stats.WinRate, Turn: state.Turn + 1}

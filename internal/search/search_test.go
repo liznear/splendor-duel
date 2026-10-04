@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"math/rand/v2"
 	"reflect"
 	"testing"
 	"time"
@@ -90,19 +89,59 @@ func TestCancellation(t *testing.T) {
 		t.Fatal("cancellation stalled")
 	}
 }
-func TestSearchDoesNotUseRealDeckOrder(t *testing.T) {
+func TestSearchPreservesFullState(t *testing.T) {
 	s := newState()
-	altered := s.Clone()
-	for _, deck := range altered.Decks {
-		for i, j := 0, len(deck)-1; i < j; i, j = i+1, j-1 {
-			deck[i], deck[j] = deck[j], deck[i]
-		}
+	s.Bag = []game.Color{"blue", "red"}
+	blind := *s.Decks[0][len(s.Decks[0])-1]
+	blind.Blind = true
+	s.Players[1].Reserved = []*game.Card{&blind}
+	s.Decks[0] = s.Decks[0][:len(s.Decks[0])-1]
+	s.Log = []string{"history"}
+	v := position(s)
+	expected := s.Clone()
+	expected.Log = []string{}
+	if !reflect.DeepEqual(v, expected) {
+		t.Fatal("search changed deck, bag, RNG, or private reservation")
 	}
-	altered.RNGState = 1
-	a := position(s, rand.New(rand.NewPCG(1, 2)))
-	b := position(altered, rand.New(rand.NewPCG(1, 2)))
-	if !reflect.DeepEqual(a, b) {
-		t.Fatal("search reads private order or RNG")
+	v.Board[0] = ""
+	v.Bag[0] = game.Gold
+	v.Decks[0][0] = nil
+	v.Players[1].Reserved[0] = nil
+	if !reflect.DeepEqual(s.Board, expected.Board) || !reflect.DeepEqual(s.Bag, expected.Bag) || !reflect.DeepEqual(s.Decks, expected.Decks) || !reflect.DeepEqual(s.Players, expected.Players) {
+		t.Fatal("search position shares mutable state with the live game")
+	}
+}
+
+func TestAgentsReserveActualWinningDeckCard(t *testing.T) {
+	for _, spec := range []string{"greedy", "alpha-beta", "mcts", "mcts/8"} {
+		t.Run(spec, func(t *testing.T) {
+			s := newState()
+			s.Board = [25]game.Color{}
+			s.Board[0], s.Board[1] = game.Gold, "blue"
+			s.Bag = nil
+			s.Pyramid = [12]*game.Card{}
+			s.Decks = [3][]*game.Card{
+				{{ID: "unaffordable", Level: 1, Color: "red", Cost: game.Counts{"red": 99}}},
+				{{ID: "winning", Level: 2, Color: "blue", Points: 20, Cost: game.Counts{}}},
+				nil,
+			}
+			s.Players[1].Privileges = 0
+			before := s.Clone()
+			config, err := Parse(spec + "@200")
+			if err != nil {
+				t.Fatal(err)
+			}
+			move, err := Choose(context.Background(), s, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if move.Action.Kind != "reserve" || move.Action.From.Kind != "deck" || move.Action.From.Level != 2 {
+				t.Fatalf("did not reserve the actual winning top card: %+v", move)
+			}
+			if !reflect.DeepEqual(s, before) {
+				t.Fatal("search mutated the live game")
+			}
+		})
 	}
 }
 func TestGreedyGamesFinish(t *testing.T) {

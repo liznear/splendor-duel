@@ -9,9 +9,10 @@ import (
 )
 
 type Config struct {
-	Kind        string `json:"kind"`
-	TimeMS      int    `json:"timeMs,omitempty"`
-	Parallelism int    `json:"parallelism,omitempty"`
+	Kind          string `json:"kind"`
+	TimeMS        int    `json:"timeMs,omitempty"`
+	Parallelism   int    `json:"parallelism,omitempty"`
+	IncludeRefill bool   `json:"includeRefill,omitempty"`
 }
 
 func Parse(spec string) (Config, error) {
@@ -20,6 +21,12 @@ func Parse(spec string) (Config, error) {
 		return Config{}, errors.New("invalid agent spec")
 	}
 	c := Config{Kind: parts[0]}
+	if kind, option, hasOption := strings.Cut(c.Kind, "+"); hasOption {
+		if option != "refill" {
+			return c, errors.New("unsupported agent option")
+		}
+		c.Kind, c.IncludeRefill = kind, true
+	}
 	if kind, count, hasWorkers := strings.Cut(c.Kind, "/"); hasWorkers {
 		switch kind {
 		case "mcts":
@@ -59,6 +66,9 @@ func Parse(spec string) (Config, error) {
 func Normalize(c Config) (Config, error) {
 	if c.Kind != "greedy" && c.Kind != "alpha-beta" && c.Kind != "mcts" {
 		return c, fmt.Errorf("unsupported agent: %s", c.Kind)
+	}
+	if c.IncludeRefill && c.Kind != "mcts" {
+		return c, errors.New("includeRefill is only supported by MCTS")
 	}
 	if c.TimeMS == 0 {
 		c.TimeMS = 4000

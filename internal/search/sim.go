@@ -10,14 +10,14 @@ import (
 
 // The simulation kernel mirrors game rules for generated moves and their default
 // choices. Cards and deck backing arrays are immutable; copying a position owns
-// all mutable data. It must only receive already determinized search positions.
+// all mutable data. Bots provide the full server state, including private cards.
 const (
 	simEmpty = -1
 	simPearl = 5
 	simGold  = 6
 
-	// Covers all straight-line takes, gold reservations, buys, and privilege plans.
-	simMaxMoves = 512
+	// Covers ordinary moves plus their replenishment-first alternatives.
+	simMaxMoves = 1024
 )
 
 type simCard struct {
@@ -47,12 +47,14 @@ type simState struct {
 	players                           [2]simPlayer
 	current, extraTurns, turn, winner int
 	draw                              bool
+	includeRefill                     bool
 	rngState                          int32
 }
 type simMove struct {
 	action     uint32
 	privileges [3]int
 	privilegeN int
+	replenish  bool
 }
 
 func simColor(c game.Color) int {
@@ -341,6 +343,9 @@ func (s *simState) popDeck(level int) *simCard {
 	return c
 }
 func (s *simState) apply(m simMove) {
+	if m.replenish {
+		s.replenish()
+	}
 	who := s.current
 	p := &s.players[who]
 	for i := 0; i < m.privilegeN; i++ {
@@ -486,9 +491,16 @@ func (s *simState) replenish() {
 }
 func (s *simState) ready(out []simMove) []simMove {
 	moves := s.moves(out)
-	if len(moves) == 0 && s.bagN > 0 {
-		s.replenish()
-		moves = s.moves(out)
+	if s.bagN > 0 && (s.includeRefill || len(moves) == 0) {
+		// Replenishment is optional even when an ordinary action is available.
+		// Generate on a copy so unchosen branches retain the original board/RNG.
+		next := *s
+		next.replenish()
+		alternatives := next.moves(moves[len(moves):])
+		for i := range alternatives {
+			alternatives[i].replenish = true
+		}
+		moves = append(moves, alternatives...)
 	}
 	if len(moves) == 0 {
 		s.draw = true
@@ -496,9 +508,38 @@ func (s *simState) ready(out []simMove) []simMove {
 	return moves
 }
 
+type simScorer struct {
+	state       *simState
+	replenished simState
+	prepared    bool
+}
+
+// All replenishment alternatives at a position share one shuffled board.
+// Prepare it once for move ordering or a rollout's candidate scan.
+func (s *simState) scorer() simScorer {
+	return simScorer{state: s}
+}
+func (v *simScorer) score(m simMove) float64 {
+	if m.replenish {
+		if !v.prepared {
+			v.replenished = *v.state
+			v.replenished.replenish()
+			v.prepared = true
+		}
+		m.replenish = false
+		return v.replenished.score(m) - .01
+	}
+	return v.state.score(m)
+}
+
 // Direct TS-style heuristic: no successor allocation or full-board affordability
 // scan for every candidate. Only the chosen move is applied.
 func (s *simState) score(m simMove) float64 {
+	if m.replenish {
+		// Prefer avoiding replenishment when its immediate benefit is identical.
+		scorer := s.scorer()
+		return scorer.score(m)
+	}
 	p := &s.players[s.current]
 	switch m.action & 3 {
 	case 2:
@@ -577,8 +618,9 @@ func simRollout(ctx context.Context, start *simState, seat int, r *rand.Rand) fl
 		}
 		best := moves[0]
 		value := math.Inf(-1)
+		scorer := s.scorer()
 		for _, m := range moves {
-			v := s.score(m) + r.Float64()*4
+			v := scorer.score(m) + r.Float64()*4
 			if v > value {
 				value = v
 				best = m
@@ -598,7 +640,7 @@ func simRollout(ctx context.Context, start *simState, seat int, r *rand.Rand) fl
 	return .5 + .45*math.Tanh((s.playerValue(seat)-s.playerValue(1-seat))/600)
 }
 func decodeSimMove(m simMove) game.Move {
-	move := game.Move{}
+	move := game.Move{Replenish: m.replenish, ReplenishFirst: m.replenish}
 	if m.privilegeN > 0 {
 		move.Privileges = append([]int(nil), m.privileges[:m.privilegeN]...)
 	}

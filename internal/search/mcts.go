@@ -6,14 +6,16 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"reflect"
 	"slices"
 	"sync"
 
 	"splender/internal/game"
 )
 
+// Nodes store no state: every simulation replays the root-to-leaf path on a
+// scratch simState copy, keeping node memory independent of position size.
 type node struct {
-	state    *simState
 	children []*edge
 	visits   int
 }
@@ -29,28 +31,36 @@ type rootStat struct {
 	wins   float64
 }
 
-func expand(n *node) {
-	if n.state.over() {
+func expand(n *node, s *simState) {
+	if s.over() {
 		return
 	}
 	var scratch [simMaxMoves]simMove
-	moves := n.state.ready(scratch[:0])
-	slices.SortStableFunc(moves, func(a, b simMove) int { return cmpScore(n.state.score(b), n.state.score(a)) })
+	moves := s.ready(scratch[:0])
+	scorer := s.scorer()
+	slices.SortStableFunc(moves, func(a, b simMove) int { return cmpScore(scorer.score(b), scorer.score(a)) })
 	for _, m := range moves {
 		n.children = append(n.children, &edge{move: m})
 	}
 }
 func mcts(ctx context.Context, s *game.State, seed uint64) []rootStat {
-	r := rand.New(rand.NewPCG(seed, seed+71))
-	root := &node{state: importSim(s)}
-	expand(root)
+	return runMCTS(ctx, &node{}, importSim(s), s.Current, rand.New(rand.NewPCG(seed, seed+71)))
+}
+
+func runMCTS(ctx context.Context, root *node, trunk *simState, seat int, r *rand.Rand) []rootStat {
+	if root.children == nil {
+		expand(root, trunk)
+	}
+	path := []*edge{}
+	nodes := []*node{root}
 	for ctx.Err() == nil {
 		n := root
-		path := []*edge{}
-		nodes := []*node{root}
-		for !n.state.over() {
+		state := *trunk
+		path = path[:0]
+		nodes = nodes[:1]
+		for !state.over() {
 			if n.children == nil {
-				expand(n)
+				expand(n, &state)
 			}
 			if len(n.children) == 0 {
 				break
@@ -61,7 +71,7 @@ func mcts(ctx context.Context, s *game.State, seed uint64) []rootStat {
 				uct := math.Inf(1)
 				if e.visits > 0 {
 					value := e.wins / float64(e.visits)
-					if n.state.current != s.Current {
+					if state.current != seat {
 						value = 1 - value
 					}
 					uct = value + 1.4*math.Sqrt(math.Log(float64(n.visits+1))/float64(e.visits))
@@ -73,30 +83,25 @@ func mcts(ctx context.Context, s *game.State, seed uint64) []rootStat {
 			}
 			path = append(path, pick)
 			fresh := pick.child == nil
+			state.apply(pick.move)
 			if fresh {
-				next := *n.state
-				next.apply(pick.move)
-				pick.child = &node{state: &next}
+				pick.child = &node{}
 			}
 			n = pick.child
 			nodes = append(nodes, n)
-			if fresh {
-				break
-			}
-			if ctx.Err() != nil {
+			if fresh || ctx.Err() != nil {
 				break
 			}
 		}
-		value := simRollout(ctx, n.state, s.Current, r)
-		if ctx.Err() != nil {
-			break
-		}
-		for _, n := range nodes {
-			n.visits++
-		}
-		for _, e := range path {
-			e.visits++
-			e.wins += value
+		value := simRollout(ctx, &state, seat, r)
+		if ctx.Err() == nil {
+			for _, n := range nodes {
+				n.visits++
+			}
+			for _, e := range path {
+				e.visits++
+				e.wins += value
+			}
 		}
 	}
 	out := []rootStat{}
@@ -105,16 +110,95 @@ func mcts(ctx context.Context, s *game.State, seed uint64) []rootStat {
 	}
 	return out
 }
-func parallelMCTS(ctx context.Context, s *game.State, workers int, fallback game.Move) (game.Move, *Stats) {
-	results := make(chan []rootStat, workers)
+
+// Session retains one MCTS tree per worker across turns of one match. Workers
+// use the actual full state, and retained trees are reused only while their
+// state and refill policy match the live game.
+//
+// A Session belongs to one agent seat of one match. Callers must serialize
+// Choose/Step/Reset per seat.
+type Session struct {
+	workers int
+	trees   []*tree
+	seat    int
+}
+type tree struct {
+	root  *node
+	trunk *simState
+}
+
+func NewSession(workers int) *Session {
+	if workers < 1 {
+		workers = 1
+	}
+	return &Session{workers: workers, trees: make([]*tree, workers), seat: -1}
+}
+
+// Choose is also valid on a nil session, which performs a fresh search.
+func (sess *Session) Choose(ctx context.Context, s *game.State, c Config) (game.Move, *Stats, error) {
+	return chooseWithStats(ctx, s, c, sess)
+}
+
+// initTree restores worker i's tree, discarding any that drifted from the
+// live state (a move or option that Step never observed).
+func (sess *Session) initTree(i int, s *game.State, includeRefill bool) {
+	live := importSim(s)
+	live.includeRefill = includeRefill
+	t := sess.trees[i]
+	if t != nil && !reflect.DeepEqual(t.trunk, live) {
+		t = nil
+	}
+	if t == nil {
+		t = &tree{root: &node{}, trunk: live}
+		sess.trees[i] = t
+	}
+}
+
+// Step advances retained trees along an applied move. A tree that never
+// explored the move is discarded; its next search starts fresh.
+func (sess *Session) Step(m game.Move) {
+	key := moveKey(m)
+	for i, t := range sess.trees {
+		if t == nil {
+			continue
+		}
+		var match *edge
+		for _, e := range t.root.children {
+			if e.child != nil && moveKey(decodeSimMove(e.move)) == key {
+				match = e
+				break
+			}
+		}
+		if match == nil {
+			sess.trees[i] = nil
+			continue
+		}
+		t.trunk.apply(match.move)
+		t.root = match.child
+	}
+}
+
+// Reset discards all retained trees (used after replenishment and options,
+// which change the state without a move the trees could follow).
+func (sess *Session) Reset() {
+	for i := range sess.trees {
+		sess.trees[i] = nil
+	}
+}
+func (sess *Session) searchMCTS(ctx context.Context, s *game.State, includeRefill bool, fallback game.Move) (game.Move, *Stats) {
+	if sess.seat != s.Current {
+		sess.Reset()
+		sess.seat = s.Current
+	}
+	results := make(chan []rootStat, sess.workers)
 	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
+	for i := 0; i < sess.workers; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			r := rand.New(rand.NewPCG(uint64(s.Seed)+uint64(i)+1, uint64(s.Turn)+77))
-			v := position(s, r)
-			results <- mcts(ctx, v, uint64(i)+uint64(s.Turn)*100+3)
+			sess.initTree(i, s, includeRefill)
+			sd := uint64(i) + uint64(s.Turn)*100 + 3
+			results <- runMCTS(ctx, sess.trees[i].root, sess.trees[i].trunk, s.Current, rand.New(rand.NewPCG(sd, sd+71)))
 		}(i)
 	}
 	wg.Wait()
@@ -154,5 +238,5 @@ func parallelMCTS(ctx context.Context, s *game.State, workers int, fallback game
 	return fallback, stats
 }
 func moveKey(m game.Move) string {
-	return fmt.Sprintf("%s:%v:%d:%s:%d:%d:%d:%v", m.Action.Kind, m.Action.Cells, m.Action.GoldCell, m.Action.From.Kind, m.Action.From.Slot, m.Action.From.Index, m.Action.From.Level, m.Privileges)
+	return fmt.Sprintf("%s:%v:%d:%s:%d:%d:%d:%v:%t:%t", m.Action.Kind, m.Action.Cells, m.Action.GoldCell, m.Action.From.Kind, m.Action.From.Slot, m.Action.From.Index, m.Action.From.Level, m.Privileges, m.Replenish, m.ReplenishFirst)
 }

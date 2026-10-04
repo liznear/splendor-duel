@@ -33,6 +33,8 @@ CreateGame:
 
 `mode` is `human` or `agents`. Human seat defaults to 1; the human player's agent configuration is ignored. Seat 0 starts, seat 1 receives a privilege. Seed is optional. Missing agent configurations default to greedy. `timeMs` defaults to 4000, range 1–120000. MCTS and alpha-beta `parallelism` defaults to 1, range 1–32; greedy requires 1. Alpha-beta workers search separate root moves with a shared time budget and retain only fully completed depths.
 
+MCTS `includeRefill` defaults to `false`. Set `"includeRefill": true` to search voluntary replenishment at every tree and rollout position. Forced replenishment remains available with either setting. Other agent kinds reject `includeRefill: true`. Compatibility string specs use `mcts+refill@1000` or `mcts/8+refill@1000`; saved agent specs preserve this setting on resume.
+
 Resume defaults to recorded mode, human seat, and supported agent specs. Removed LLM/random specs fall back to greedy. Optional `p1`/`p2` string specs are accepted for compatibility; new clients should use `players`.
 
 ## Snapshot
@@ -60,7 +62,7 @@ Move visuals include `action`, `privGems`, `replenished`, `replenishFirst`, `tak
 
 Purchase visuals also include `payment`, a map of gem colors to the counts actually paid after discounts and preceding optional actions, including gold substitutions. `tokenChanges` records the acting player's signed net changes by gem color across the whole move, including privileges, payment, abilities, and discards. Zero net changes are omitted. The recap shows payment separately from net changes so a gem spent and subsequently recovered remains visible in the payment row.
 
-The public `view` retains the browser model: `board` (25 colors/null), `bag` (colors), `decks` (three arrays of anonymous `{}` entries, exposing counts only), `pyramid` (12 cards/null), `royals`, `players` (two), `current`, `extraTurns`, `turnCount`, `winner`, `draw`, `log`. It omits seed and RNG state. Opponent blind reserved cards are `id: "hidden"` placeholders with only their level visible. Public pyramid reservations stay visible. Search samples unseen cards without reading the live deck order, actual shuffle state, or opponent blind cards.
+The public `view` retains the browser model: `board` (25 colors/null), `bag` (colors), `decks` (three arrays of anonymous `{}` entries, exposing counts only), `pyramid` (12 cards/null), `royals`, `players` (two), `current`, `extraTurns`, `turnCount`, `winner`, `draw`, `log`. It omits seed and RNG state. Opponent blind reserved cards are `id: "hidden"` placeholders with only their level visible. Public pyramid reservations stay visible. Server-side bots search the full game state, including actual deck and bag order, shuffle RNG state, and both players' blind reserved cards. Every parallel MCTS worker starts from that same full state, with separate rollout randomness.
 
 Player fields: `name`, `tokens`, `bonuses`, `cards` (`{def, color}`), `reserved`, `royals`, `privileges`, `crowns`, `points`, `royalsTaken`. Token counts use `black`, `red`, `green`, `blue`, `white`, `pearl`, `gold`; bonuses use the first five. Cards expose `id`, `level`, `color`, `isAssociate`, `points`, `bonus`, `ability`, `crowns`, `cost`, optional `blind`. Royals expose `id`, `points`, `ability`.
 
@@ -80,7 +82,7 @@ All cell, slot, and reserved-card indices are zero-based. Deck level is 1–3. M
 
 Mutations require the configured human seat and the current turn. State reads do not advance games or write session results. Repeated calls during the same bot/step search share that operation. A later step request, after completion, intentionally starts another turn. There is no streaming or `botMessage` field.
 
-Go session records retain the original event format and add an optional `names` event when a resumed game changes agent names.
+Go session records retain the original event format and add an optional `names` event when a resumed game changes agent names. MCTS `move` events also include `search: {simulations, moveSimulations, winRate}`, with the same values and reward semantics as the snapshot. The event's `seat` identifies the bot and its zero-based `turn` identifies the searched position. If no rollouts completed, counts are zero and `winRate` is `null`. Human and non-MCTS moves omit `search`. Older records without statistics remain replayable; resume prefixes preserve recorded statistics, but the snapshot's latest-search display is not restored on resume.
 
 ## Compatibility and evolution
 

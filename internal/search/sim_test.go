@@ -24,7 +24,7 @@ func singleTokenPosition(t testing.TB) *game.State {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return position(s, rand.New(rand.NewPCG(1, 2)))
+	return position(s)
 }
 
 func TestRolloutAllocationBudget(t *testing.T) {

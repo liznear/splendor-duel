@@ -4,7 +4,6 @@ package search
 import (
 	"context"
 	"errors"
-	"math/rand/v2"
 	"time"
 
 	"splender/internal/game"
@@ -25,6 +24,10 @@ type Stats struct {
 }
 
 func ChooseWithStats(ctx context.Context, s *game.State, c Config) (game.Move, *Stats, error) {
+	return chooseWithStats(ctx, s, c, nil)
+}
+
+func chooseWithStats(ctx context.Context, s *game.State, c Config, sess *Session) (game.Move, *Stats, error) {
 	if s.Over() {
 		return game.Move{}, nil, errors.New("game over")
 	}
@@ -37,8 +40,7 @@ func ChooseWithStats(ctx context.Context, s *game.State, c Config) (game.Move, *
 	}
 	searchCtx, cancel := context.WithTimeout(ctx, time.Duration(c.TimeMS)*time.Millisecond)
 	defer cancel()
-	r := rand.New(rand.NewPCG(uint64(s.Seed)+uint64(s.Turn), uint64(s.Current)+42))
-	v := position(s, r)
+	v := position(s)
 	fallback, err := greedy(searchCtx, v)
 	if err != nil {
 		return game.Move{}, nil, err
@@ -61,7 +63,14 @@ func ChooseWithStats(ctx context.Context, s *game.State, c Config) (game.Move, *
 			fallback = alphaBeta(searchCtx, v, fallback)
 		}
 	case "mcts":
-		fallback, stats = parallelMCTS(searchCtx, v, c.Parallelism, fallback)
+		if sess == nil {
+			sess = NewSession(c.Parallelism)
+		} else if sess.workers != c.Parallelism {
+			sess.workers = c.Parallelism
+			sess.trees = make([]*tree, c.Parallelism)
+			sess.seat = -1
+		}
+		fallback, stats = sess.searchMCTS(searchCtx, v, c.IncludeRefill, fallback)
 	}
 	if ctx.Err() != nil {
 		return game.Move{}, nil, ctx.Err()

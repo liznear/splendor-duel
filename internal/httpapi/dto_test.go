@@ -2,11 +2,23 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
+	"reflect"
 	"testing"
 
 	"splender/internal/game"
 	"splender/internal/search"
 )
+
+func TestAgentSpecPreservesRefillOnResume(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		c := search.Config{Kind: "mcts", TimeMS: 1000, Parallelism: 8, IncludeRefill: enabled}
+		parsed, err := search.Parse(spec(c))
+		if err != nil || parsed != c {
+			t.Fatalf("agent spec loses refill setting: %+v, %v", parsed, err)
+		}
+	}
+}
 
 func TestVisualIncludesDefaultAbilityResults(t *testing.T) {
 	for _, kind := range []string{"takeSame", "steal", "turn", "privilege"} {
@@ -79,6 +91,7 @@ func TestSnapshotReportsLatestBotSearch(t *testing.T) {
 		t.Fatalf("configured timeout missing from snapshot: %v", out.BotTimeoutMS)
 	}
 	id := out.ID
+	file := out.File
 	out, err = s.Advance(context.Background(), id, false)
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +103,38 @@ func TestSnapshotReportsLatestBotSearch(t *testing.T) {
 	current, err := s.State(id, 0)
 	if err != nil || current.BotSearch[0] != stats || current.BotSearch[1] != nil {
 		t.Fatal("state endpoint lost search stats or invented stats for greedy agent", err)
+	}
+	record, err := s.sessions.Read(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded := record.Events[0].Search
+	if recorded == nil || recorded.Simulations != stats.Simulations || recorded.MoveSimulations != stats.MoveSimulations || recorded.WinRate == nil || *recorded.WinRate != *stats.WinRate {
+		t.Fatalf("recorded search differs from snapshot: %+v vs %+v", recorded, stats)
+	}
+	replayed, err := record.Replay()
+	m, _ := s.get(id)
+	if err != nil || !reflect.DeepEqual(replayed, m.state) {
+		t.Fatal("search statistics changed session replay", err)
+	}
+	if _, err = s.Advance(context.Background(), id, false); err != nil {
+		t.Fatal(err)
+	}
+	record, err = s.sessions.Read(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := record.Events[len(record.Events)-1]
+	data, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err = json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if event.Seat != 1 || event.Search != nil || fields["search"] != nil {
+		t.Fatalf("greedy move must omit search statistics: %s", data)
 	}
 }
 

@@ -35,16 +35,26 @@ type Meta struct {
 	ResumedFrom string    `json:"resumedFrom,omitempty"`
 	Resume      *Prefix   `json:"resume,omitempty"`
 }
+
+// SearchStats records completed MCTS rollouts from the acting player's perspective.
+// WinRate is an average rollout reward, not a calibrated win probability.
+type SearchStats struct {
+	Simulations     int      `json:"simulations"`
+	MoveSimulations int      `json:"moveSimulations"`
+	WinRate         *float64 `json:"winRate"`
+}
+
 type Event struct {
-	Type       string     `json:"t"`
-	Seat       int        `json:"seat,omitempty"`
-	Turn       int        `json:"turn,omitempty"`
-	Move       *game.Move `json:"move,omitempty"`
-	Privileges []int      `json:"privileges,omitempty"`
-	Replenish  bool       `json:"replenish,omitempty"`
-	Outcome    string     `json:"outcome,omitempty"`
-	Turns      int        `json:"turns,omitempty"`
-	Names      *[2]string `json:"names,omitempty"`
+	Type       string       `json:"t"`
+	Seat       int          `json:"seat,omitempty"`
+	Turn       int          `json:"turn,omitempty"`
+	Move       *game.Move   `json:"move,omitempty"`
+	Search     *SearchStats `json:"search,omitempty"`
+	Privileges []int        `json:"privileges,omitempty"`
+	Replenish  bool         `json:"replenish,omitempty"`
+	Outcome    string       `json:"outcome,omitempty"`
+	Turns      int          `json:"turns,omitempty"`
+	Names      *[2]string   `json:"names,omitempty"`
 }
 type Record struct {
 	Meta   Meta
