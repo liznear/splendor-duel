@@ -527,19 +527,17 @@ func (v *simScorer) score(m simMove) float64 {
 			v.prepared = true
 		}
 		m.replenish = false
-		return v.replenished.score(m) - .01
+		return scoreMove(&v.replenished, m) - .01
 	}
-	return v.state.score(m)
+	return scoreMove(v.state, m)
 }
 
 // Direct TS-style heuristic: no successor allocation or full-board affordability
 // scan for every candidate. Only the chosen move is applied.
-func (s *simState) score(m simMove) float64 {
-	if m.replenish {
-		// Prefer avoiding replenishment when its immediate benefit is identical.
-		scorer := s.scorer()
-		return scorer.score(m)
-	}
+// scoreMove is a free function so neither scorer's receiver can force the
+// other to escape; a leaking receiver here would heap-allocate a simScorer
+// (with an embedded simState) on every rollout ply.
+func scoreMove(s *simState, m simMove) float64 {
 	p := &s.players[s.current]
 	switch m.action & 3 {
 	case 2:
@@ -585,6 +583,14 @@ func (s *simState) score(m simMove) float64 {
 		}
 		return value
 	}
+}
+func (s *simState) score(m simMove) float64 {
+	if m.replenish {
+		// Prefer avoiding replenishment when its immediate benefit is identical.
+		sc := s.scorer()
+		return sc.score(m)
+	}
+	return scoreMove(s, m)
 }
 func (s *simState) playerValue(seat int) float64 {
 	p := &s.players[seat]
