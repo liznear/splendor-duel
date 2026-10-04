@@ -31,7 +31,7 @@ CreateGame:
 }
 ```
 
-`mode` is `human` or `agents`. Human seat defaults to 1; the human player's agent configuration is ignored. Seat 0 starts, seat 1 receives a privilege. Seed is optional. Missing agent configurations default to greedy. `timeMs` defaults to 4000, range 1–120000. MCTS `parallelism` defaults to 1, range 1–32; other agents require 1.
+`mode` is `human` or `agents`. Human seat defaults to 1; the human player's agent configuration is ignored. Seat 0 starts, seat 1 receives a privilege. Seed is optional. Missing agent configurations default to greedy. `timeMs` defaults to 4000, range 1–120000. MCTS and alpha-beta `parallelism` defaults to 1, range 1–32; greedy requires 1. Alpha-beta workers search separate root moves with a shared time budget and retain only fully completed depths.
 
 Resume defaults to recorded mode, human seat, and supported agent specs. Removed LLM/random specs fall back to greedy. Optional `p1`/`p2` string specs are accepted for compatibility; new clients should use `players`.
 

@@ -1,0 +1,8 @@
+{"type": "meta", "parallel": "ab/8@5000", "serial": "ab@5000", "plannedGames": 6, "pairs": 3, "jobs": 1, "depthLimit": 4, "source": "same isolated alpha-beta arena executable as the one-second comparison; only per-move budget changed"}
+{"type": "game", "pair": 1, "seed": 1000, "parallelSeat": 0, "winnerSeat": 0, "draw": false, "turns": 70, "seconds": 141.588, "winner": "parallel"}
+{"type": "game", "pair": 1, "seed": 1000, "parallelSeat": 1, "winnerSeat": 1, "draw": false, "turns": 77, "seconds": 177.357, "winner": "parallel"}
+{"type": "game", "pair": 2, "seed": 8919, "parallelSeat": 0, "winnerSeat": 0, "draw": false, "turns": 71, "seconds": 170.29, "winner": "parallel"}
+{"type": "game", "pair": 2, "seed": 8919, "parallelSeat": 1, "winnerSeat": 1, "draw": false, "turns": 79, "seconds": 159.224, "winner": "parallel"}
+{"type": "game", "pair": 3, "seed": 16838, "parallelSeat": 0, "winnerSeat": 0, "draw": false, "turns": 61, "seconds": 170.306, "winner": "parallel"}
+{"type": "game", "pair": 3, "seed": 16838, "parallelSeat": 1, "winnerSeat": 0, "draw": false, "turns": 77, "seconds": 182.239, "winner": "serial"}
+{"type": "summary", "completed": 6, "parallelWins": 5, "serialWins": 1, "draws": 0, "parallelWinsFirst": 3, "parallelWinsSecond": 2, "meanTurns": 72.5, "totalSeconds": 1001.0}

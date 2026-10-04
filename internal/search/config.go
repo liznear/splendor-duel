@@ -20,17 +20,27 @@ func Parse(spec string) (Config, error) {
 		return Config{}, errors.New("invalid agent spec")
 	}
 	c := Config{Kind: parts[0]}
-	if strings.HasPrefix(c.Kind, "mcts/") {
-		workers, err := strconv.Atoi(strings.TrimPrefix(c.Kind, "mcts/"))
+	if kind, count, hasWorkers := strings.Cut(c.Kind, "/"); hasWorkers {
+		switch kind {
+		case "mcts":
+			c.Kind = "mcts"
+		case "ab", "alpha-beta":
+			c.Kind = "alpha-beta"
+		default:
+			return c, errors.New("unsupported parallel agent")
+		}
+		workers, err := strconv.Atoi(count)
 		if err != nil || workers < 1 {
 			return c, errors.New("invalid parallelism")
 		}
-		c.Kind = "mcts"
 		c.Parallelism = workers
 	}
 	switch c.Kind {
 	case "ab":
 		c.Kind = "alpha-beta"
+	case "par-ab":
+		c.Kind = "alpha-beta"
+		c.Parallelism = min(8, runtime.GOMAXPROCS(0))
 	case "mcts2":
 		c.Kind = "mcts"
 	case "par-mcts2":
@@ -62,8 +72,8 @@ func Normalize(c Config) (Config, error) {
 	if c.Parallelism < 1 || c.Parallelism > 32 {
 		return c, errors.New("parallelism must be 1..32")
 	}
-	if c.Kind != "mcts" && c.Parallelism != 1 {
-		return c, errors.New("only mcts supports parallelism")
+	if c.Kind == "greedy" && c.Parallelism != 1 {
+		return c, errors.New("greedy does not support parallelism")
 	}
 	return c, nil
 }
@@ -72,6 +82,9 @@ func (c Config) Name() string {
 	case "greedy":
 		return "贪心bot"
 	case "alpha-beta":
+		if c.Parallelism > 1 {
+			return fmt.Sprintf("αβbot(%d goroutines)", c.Parallelism)
+		}
 		return "αβbot"
 	default:
 		if c.Parallelism > 1 {

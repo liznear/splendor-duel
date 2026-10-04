@@ -55,7 +55,11 @@ func ChooseWithStats(ctx context.Context, s *game.State, c Config) (game.Move, *
 	}
 	switch c.Kind {
 	case "alpha-beta":
-		fallback = alphaBeta(searchCtx, v, fallback)
+		if c.Parallelism > 1 {
+			fallback = parallelAlphaBeta(searchCtx, v, c.Parallelism, fallback)
+		} else {
+			fallback = alphaBeta(searchCtx, v, fallback)
+		}
 	case "mcts":
 		fallback, stats = parallelMCTS(searchCtx, v, c.Parallelism, fallback)
 	}

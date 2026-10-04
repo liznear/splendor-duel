@@ -2,9 +2,9 @@
 // live here, so server migrations do not spread through UI event handlers.
 export function agentConfig(spec) {
   const [kind, ms] = spec.split('@');
-  const config = { kind: kind === 'ab' ? 'alpha-beta' : kind === 'par-mcts2' ? 'mcts' : kind };
+  const config = { kind: (kind === 'ab' || kind === 'par-ab') ? 'alpha-beta' : kind === 'par-mcts2' ? 'mcts' : kind };
   if (ms) config.timeMs = Number(ms);
-  if (kind === 'par-mcts2') config.parallelism = 8;
+  if (kind === 'par-mcts2' || kind === 'par-ab') config.parallelism = 8;
   return config;
 }
 

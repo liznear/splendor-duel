@@ -1,0 +1,6 @@
+{"completedDepth":1,"move":{"action":{"kind":"take","cells":[4,9,14]}},"position":"opening1000","seconds":1.001113267,"workers":1}
+{"completedDepth":1,"move":{"action":{"kind":"take","cells":[4,9,14]}},"position":"opening1000","seconds":1.00390507,"workers":8}
+{"completedDepth":1,"move":{"action":{"kind":"take","cells":[9,13,17]}},"position":"opening8919","seconds":1.000589141,"workers":1}
+{"completedDepth":1,"move":{"action":{"kind":"take","cells":[9,13,17]}},"position":"opening8919","seconds":1.003809247,"workers":8}
+{"completedDepth":2,"move":{"privileges":[2],"action":{"kind":"buy","from":{"kind":"pyramid","slot":4}}},"position":"savedTurn14","seconds":1.001263654,"workers":1}
+{"completedDepth":2,"move":{"privileges":[2],"action":{"kind":"buy","from":{"kind":"pyramid","slot":4}}},"position":"savedTurn14","seconds":1.006900483,"workers":8}

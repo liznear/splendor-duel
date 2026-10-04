@@ -5,6 +5,7 @@ import { agentConfig, requestFor, api } from '../public/api.js';
 describe('browser API adapter', () => {
   test('translates UI choices and routes to v1', () => {
     expect(agentConfig('ab@1000')).toEqual({ kind: 'alpha-beta', timeMs: 1000 });
+    expect(agentConfig('par-ab@1000')).toEqual({ kind: 'alpha-beta', timeMs: 1000, parallelism: 8 });
     expect(agentConfig('par-mcts2@2000')).toEqual({ kind: 'mcts', timeMs: 2000, parallelism: 8 });
     expect(requestFor('/api/new', { mode: 'human', humanSeat: 0, p2: 'greedy' })).toEqual({
       path: '/api/v1/games', body: { mode: 'human', humanSeat: 0, seed: undefined, players: [{ kind: 'greedy' }, { kind: 'greedy' }] },

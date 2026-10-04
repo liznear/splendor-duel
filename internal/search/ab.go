@@ -8,39 +8,7 @@ import (
 )
 
 func alphaBeta(ctx context.Context, s *game.State, fallback game.Move) game.Move {
-	moves := orderedMoves(s)
-	for depth := 1; depth <= 4; depth++ {
-		best := fallback
-		v := math.Inf(-1)
-		complete := true
-		for _, m := range moves {
-			if ctx.Err() != nil {
-				complete = false
-				break
-			}
-			n, err := game.Apply(s, m)
-			if err != nil {
-				continue
-			}
-			value, ok := minimax(ctx, n, depth-1, math.Inf(-1), math.Inf(1), s.Current)
-			if !ok {
-				complete = false
-				break
-			}
-			if value > v {
-				v = value
-				best = m
-			}
-		}
-		if !complete {
-			break
-		}
-		fallback = best
-		if v >= 1e9 {
-			break
-		}
-	}
-	return refine(ctx, s, fallback)
+	return searchAlphaBeta(ctx, s, 1, fallback)
 }
 func cmpScore(a, b float64) int {
 	if a < b {

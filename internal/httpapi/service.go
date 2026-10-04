@@ -162,6 +162,9 @@ func spec(c search.Config) string {
 	kind := c.Kind
 	if kind == "alpha-beta" {
 		kind = "ab"
+		if c.Parallelism > 1 {
+			kind = fmt.Sprintf("ab/%d", c.Parallelism)
+		}
 	}
 	if c.Kind == "mcts" && c.Parallelism > 1 {
 		kind = fmt.Sprintf("mcts/%d", c.Parallelism)

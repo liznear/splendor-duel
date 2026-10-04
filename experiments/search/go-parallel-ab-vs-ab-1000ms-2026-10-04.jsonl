@@ -1,0 +1,8 @@
+{"type": "meta", "parallel": "ab/8@1000", "serial": "ab@1000", "plannedGames": 6, "pairs": 3, "jobs": 1, "depthLimit": 4, "source": "workspace alpha-beta sources in isolated arena build; unfinished MCTS refactor excluded"}
+{"type": "game", "pair": 1, "seed": 1000, "parallelSeat": 0, "winnerSeat": 1, "draw": false, "turns": 72, "seconds": 48.405, "winner": "serial"}
+{"type": "game", "pair": 1, "seed": 1000, "parallelSeat": 1, "winnerSeat": 0, "draw": false, "turns": 62, "seconds": 46.184, "winner": "serial"}
+{"type": "game", "pair": 2, "seed": 8919, "parallelSeat": 0, "winnerSeat": 0, "draw": false, "turns": 65, "seconds": 43.732, "winner": "parallel"}
+{"type": "game", "pair": 2, "seed": 8919, "parallelSeat": 1, "winnerSeat": 0, "draw": false, "turns": 71, "seconds": 51.306, "winner": "serial"}
+{"type": "game", "pair": 3, "seed": 16838, "parallelSeat": 0, "winnerSeat": 1, "draw": false, "turns": 83, "seconds": 57.405, "winner": "serial"}
+{"type": "game", "pair": 3, "seed": 16838, "parallelSeat": 1, "winnerSeat": 0, "draw": false, "turns": 77, "seconds": 53.719, "winner": "serial"}
+{"type": "summary", "completed": 6, "parallelWins": 1, "serialWins": 5, "draws": 0, "meanTurns": 71.7}
