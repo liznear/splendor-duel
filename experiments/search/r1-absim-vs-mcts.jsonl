@@ -1,0 +1,13 @@
+{"game":1,"seed":31100000,"aSeat":0,"winner":"B","turns":76}
+{"game":2,"seed":31100000,"aSeat":1,"winner":"B","turns":72}
+{"game":3,"seed":31107919,"aSeat":0,"winner":"B","turns":73}
+{"game":4,"seed":31107919,"aSeat":1,"winner":"B","turns":73}
+{"game":5,"seed":31115838,"aSeat":0,"winner":"B","turns":72}
+{"game":6,"seed":31115838,"aSeat":1,"winner":"B","turns":73}
+{"game":7,"seed":31123757,"aSeat":0,"winner":"B","turns":71}
+{"game":8,"seed":31123757,"aSeat":1,"winner":"B","turns":76}
+{"game":9,"seed":31131676,"aSeat":0,"winner":"B","turns":70}
+{"game":10,"seed":31131676,"aSeat":1,"winner":"A","turns":72}
+{"game":11,"seed":31139595,"aSeat":0,"winner":"B","turns":74}
+{"game":12,"seed":31139595,"aSeat":1,"winner":"B","turns":64}
+{"summary":true,"a":"./experiments/search/cand-absim.ts","b":"mcts@1000","aBudget":"1000ms","bBudget":"1000ms","maxTurns":180,"games":12,"aWins":1,"bWins":11,"draws":0,"cappedDraws":0,"illegal":0,"aMsPerMove":649,"bMsPerMove":893,"aPlayoutsPerMove":0,"bPlayoutsPerMove":20669}

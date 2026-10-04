@@ -1,0 +1,13 @@
+{"game":1,"seed":36600000,"aSeat":0,"winner":"A","turns":64}
+{"game":2,"seed":36600000,"aSeat":1,"winner":"A","turns":52}
+{"game":3,"seed":36607919,"aSeat":0,"winner":"A","turns":73}
+{"game":4,"seed":36607919,"aSeat":1,"winner":"A","turns":66}
+{"game":5,"seed":36615838,"aSeat":0,"winner":"A","turns":76}
+{"game":6,"seed":36615838,"aSeat":1,"winner":"A","turns":74}
+{"game":7,"seed":36623757,"aSeat":0,"winner":"A","turns":66}
+{"game":8,"seed":36623757,"aSeat":1,"winner":"A","turns":74}
+{"game":9,"seed":36631676,"aSeat":0,"winner":"A","turns":58}
+{"game":10,"seed":36631676,"aSeat":1,"winner":"A","turns":60}
+{"game":11,"seed":36639595,"aSeat":0,"winner":"A","turns":78}
+{"game":12,"seed":36639595,"aSeat":1,"winner":"A","turns":67}
+{"summary":true,"a":"./src/agents/mcts2.ts:factory=mcts2Agent","b":"greedy","aBudget":"1000ms","bBudget":"1000ms","maxTurns":180,"games":12,"aWins":12,"bWins":0,"draws":0,"cappedDraws":0,"illegal":0,"aMsPerMove":914,"bMsPerMove":9,"aPlayoutsPerMove":19259,"bPlayoutsPerMove":0}

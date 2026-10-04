@@ -1,0 +1,13 @@
+{"game":1,"seed":30200000,"aSeat":0,"winner":"B","turns":69}
+{"game":2,"seed":30200000,"aSeat":1,"winner":"B","turns":70}
+{"game":3,"seed":30207919,"aSeat":0,"winner":"B","turns":67}
+{"game":4,"seed":30207919,"aSeat":1,"winner":"B","turns":79}
+{"game":5,"seed":30215838,"aSeat":0,"winner":"B","turns":66}
+{"game":6,"seed":30215838,"aSeat":1,"winner":"B","turns":68}
+{"game":7,"seed":30223757,"aSeat":0,"winner":"B","turns":85}
+{"game":8,"seed":30223757,"aSeat":1,"winner":"B","turns":72}
+{"game":9,"seed":30231676,"aSeat":0,"winner":"B","turns":66}
+{"game":10,"seed":30231676,"aSeat":1,"winner":"B","turns":78}
+{"game":11,"seed":30239595,"aSeat":0,"winner":"B","turns":69}
+{"game":12,"seed":30239595,"aSeat":1,"winner":"B","turns":63}
+{"summary":true,"a":"ab@1000","b":"mcts@1000","aBudget":"1000ms","bBudget":"1000ms","maxTurns":180,"games":12,"aWins":0,"bWins":12,"draws":0,"cappedDraws":0,"illegal":0,"aMsPerMove":470,"bMsPerMove":908,"aPlayoutsPerMove":0,"bPlayoutsPerMove":21457}

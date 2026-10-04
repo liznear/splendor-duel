@@ -53,9 +53,10 @@ function makeBot(spec: string, onThinking?: (name: string, text: string) => void
   switch (kind) {
     case 'random': return randomAgent();
     case 'ab':
-    case 'mcts': {
-      // 后缀 @ms 控制每步搜索时间上限: ab / ab@3000 / mcts / mcts@3000; 搜索在 worker 子线程
-      return workerSearchAgent(spec, kind === 'ab' ? 'αβbot' : 'MCTSbot');
+    case 'mcts':
+    case 'mcts2': {
+      // 后缀 @ms 控制每步搜索时间上限: ab / ab@3000 / mcts / mcts@3000 / mcts2; 搜索在 worker 子线程
+      return workerSearchAgent(spec, kind === 'ab' ? 'αβbot' : kind === 'mcts' ? 'MCTSbot' : 'MCTS2bot');
     }
     case 'greedy': return greedyAgent();
     case 'llm':

@@ -1,0 +1,198 @@
+[
+ {
+  "turn": 18,
+  "branch": 62,
+  "abSim.d1": {
+   "nodes": 62,
+   "ms": 6,
+   "v": 57
+  },
+  "abSim.d2": {
+   "nodes": 346,
+   "ms": 6,
+   "v": 2617
+  },
+  "abSim.d3": {
+   "nodes": 3808,
+   "ms": 20,
+   "v": 1052
+  },
+  "mmSim.d1": {
+   "nodes": 62,
+   "ms": 1,
+   "v": 57
+  },
+  "mmSim.d2": {
+   "nodes": 3216,
+   "ms": 14,
+   "v": 2617
+  },
+  "mmSim.d3": {
+   "nodes": 112987,
+   "ms": 199,
+   "v": 1052
+  },
+  "mmEngine.d1": {
+   "nodes": 0,
+   "ms": 8,
+   "v": 2641
+  },
+  "mmEngine.d2": {
+   "nodes": 3154,
+   "ms": 402,
+   "v": 849
+  },
+  "mmEngine.d3": {
+   "nodes": 112925,
+   "ms": 18045,
+   "v": 849
+  }
+ },
+ {
+  "turn": 45,
+  "branch": 8,
+  "abSim.d1": {
+   "nodes": 8,
+   "ms": 2,
+   "v": 6
+  },
+  "abSim.d2": {
+   "nodes": 23,
+   "ms": 1,
+   "v": 6
+  },
+  "abSim.d3": {
+   "nodes": 114,
+   "ms": 1,
+   "v": 82
+  },
+  "mmSim.d1": {
+   "nodes": 8,
+   "ms": 1,
+   "v": 6
+  },
+  "mmSim.d2": {
+   "nodes": 83,
+   "ms": 2,
+   "v": 6
+  },
+  "mmSim.d3": {
+   "nodes": 608,
+   "ms": 3,
+   "v": 82
+  },
+  "mmEngine.d1": {
+   "nodes": 0,
+   "ms": 3,
+   "v": 6
+  },
+  "mmEngine.d2": {
+   "nodes": 75,
+   "ms": 23,
+   "v": 6
+  },
+  "mmEngine.d3": {
+   "nodes": 600,
+   "ms": 168,
+   "v": 82
+  }
+ },
+ {
+  "turn": 54,
+  "branch": 2,
+  "abSim.d1": {
+   "nodes": 2,
+   "ms": 3,
+   "v": 50
+  },
+  "abSim.d2": {
+   "nodes": 10,
+   "ms": 1,
+   "v": 12
+  },
+  "abSim.d3": {
+   "nodes": 89,
+   "ms": 4,
+   "v": 50
+  },
+  "mmSim.d1": {
+   "nodes": 2,
+   "ms": 3,
+   "v": 50
+  },
+  "mmSim.d2": {
+   "nodes": 10,
+   "ms": 1,
+   "v": 12
+  },
+  "mmSim.d3": {
+   "nodes": 329,
+   "ms": 5,
+   "v": 50
+  },
+  "mmEngine.d1": {
+   "nodes": 0,
+   "ms": 1,
+   "v": 50
+  },
+  "mmEngine.d2": {
+   "nodes": 8,
+   "ms": 4,
+   "v": 50
+  },
+  "mmEngine.d3": {
+   "nodes": 327,
+   "ms": 99,
+   "v": 50
+  }
+ },
+ {
+  "turn": 63,
+  "branch": 50,
+  "abSim.d1": {
+   "nodes": 50,
+   "ms": 2,
+   "v": 2081
+  },
+  "abSim.d2": {
+   "nodes": 232,
+   "ms": 3,
+   "v": 2337
+  },
+  "abSim.d3": {
+   "nodes": 2472,
+   "ms": 7,
+   "v": 2849
+  },
+  "mmSim.d1": {
+   "nodes": 50,
+   "ms": 1,
+   "v": 2081
+  },
+  "mmSim.d2": {
+   "nodes": 2164,
+   "ms": 3,
+   "v": 2353
+  },
+  "mmSim.d3": {
+   "nodes": 68831,
+   "ms": 94,
+   "v": 2865
+  },
+  "mmEngine.d1": {
+   "nodes": 0,
+   "ms": 7,
+   "v": 2337
+  },
+  "mmEngine.d2": {
+   "nodes": 2114,
+   "ms": 265,
+   "v": 2353
+  },
+  "mmEngine.d3": {
+   "nodes": 68781,
+   "ms": 13782,
+   "v": 2081
+  }
+ }
+]

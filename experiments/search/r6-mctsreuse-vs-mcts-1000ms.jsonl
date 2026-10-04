@@ -1,0 +1,13 @@
+{"game":1,"seed":36000000,"aSeat":0,"winner":"A","turns":73}
+{"game":2,"seed":36000000,"aSeat":1,"winner":"A","turns":77}
+{"game":3,"seed":36007919,"aSeat":0,"winner":"B","turns":79}
+{"game":4,"seed":36007919,"aSeat":1,"winner":"A","turns":82}
+{"game":5,"seed":36015838,"aSeat":0,"winner":"A","turns":65}
+{"game":6,"seed":36015838,"aSeat":1,"winner":"B","turns":65}
+{"game":7,"seed":36023757,"aSeat":0,"winner":"A","turns":73}
+{"game":8,"seed":36023757,"aSeat":1,"winner":"B","turns":70}
+{"game":9,"seed":36031676,"aSeat":0,"winner":"B","turns":74}
+{"game":10,"seed":36031676,"aSeat":1,"winner":"A","turns":73}
+{"game":11,"seed":36039595,"aSeat":0,"winner":"A","turns":77}
+{"game":12,"seed":36039595,"aSeat":1,"winner":"A","turns":63}
+{"summary":true,"a":"./experiments/search/cand-mcts-reuse.ts","b":"mcts@1000","aBudget":"1000ms","bBudget":"1000ms","maxTurns":180,"games":12,"aWins":8,"bWins":4,"draws":0,"cappedDraws":0,"illegal":0,"aMsPerMove":925,"bMsPerMove":932,"aPlayoutsPerMove":28056,"bPlayoutsPerMove":45193}

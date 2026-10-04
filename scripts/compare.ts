@@ -1,6 +1,6 @@
-// A/B 对比: 被测 agent(llm2|llm3|ab[@ms]|mcts[@ms]) vs baseline(llm|llm2|greedy|ab[@ms]|mcts[@ms]), 交替座次, 固定种子可复现.
+// A/B 对比: 被测 agent(llm2|llm3|ab[@ms]|mcts[@ms]|mcts2[@ms]) vs baseline(llm|llm2|greedy|ab[@ms]|mcts[@ms]|mcts2[@ms]), 交替座次, 固定种子可复现.
 // 用法: bun scripts/compare.ts [对数=6] [--jobs N] [--from N] [--model provider/model]
-//                        [--baseline llm|llm2|greedy|ab[@ms]|mcts[@ms]] [--a llm2|llm3|ab[@ms]|mcts[@ms]]
+//                        [--baseline llm|llm2|greedy|ab[@ms]|mcts[@ms]|mcts2[@ms]] [--a llm2|llm3|ab[@ms]|mcts[@ms]|mcts2[@ms]]
 //                        [--thinking off|low|medium|high] [--record] [--verbose]
 // 并发: 局与局之间 Worker 线程并发, --jobs 并发度(默认 10)。
 //   注意: 并发摊薄单局 CPU, ab 的墙钟时间预算会按共享 CPU 折算(深度变浅), 精确测量请 --jobs 1。
@@ -10,7 +10,9 @@ import { llmAgent } from '../src/agents/llm.ts';
 import { llm2Agent } from '../src/agents/llm2.ts';
 import { llm3Agent } from '../src/agents/llm3.ts';
 import { greedyAgent } from '../src/agents/greedy.ts';
+import type { AbStats } from '../src/agents/ab.ts';
 import { mctsAgent, type MctsStats } from '../src/agents/mcts.ts';
+import { mcts2Agent } from '../src/agents/mcts2.ts';
 import type { Agent } from '../src/agents/agent.ts';
 
 
@@ -50,6 +52,7 @@ function makeAgent(spec: string, cfg: CompareCfg, llmLabel: string): Agent & { s
   const thinking = cfg.thinkingLevel ? { thinkingLevel: cfg.thinkingLevel } : {};
   if (kind === 'greedy') return greedyAgent();
   if (kind === 'mcts') return mctsAgent({ name: 'MCTS', timeMs: specAbMs(spec) });
+  if (kind === 'mcts2') return mcts2Agent({ name: 'MCTS2', timeMs: specAbMs(spec) });
   const make = kind === 'llm' ? llmAgent : kind === 'llm2' ? llm2Agent : llm3Agent;
   return make({ model: cfg.model, name: llmLabel, ...thinking });
 }

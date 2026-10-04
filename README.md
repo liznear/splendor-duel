@@ -26,6 +26,8 @@ bun test             # 引擎规则自检 (Web e2e 见下)
 | `random` | 均匀随机走法 |
 | `greedy` | 1 层前瞻 + 启发式估值（对随机胜率 ~80%） |
 | `ab[@ms]` | αβ 搜索棋手：negamax 迭代加深（深度 1→4）+ greedy 估值， 叶节点即时结算特权/补货的 1 层修正；`@ms` 每步时间上限（缺省 4000）， 如 `ab@10000`。零 API 成本、本地搜索。A/B：`bun scripts/compare.ts 10 --a ab --baseline greedy` |
+| `mcts[@ms]` | MCTS 棋手： 轻量模拟核（与引擎全随机对拍逐步校验）+ UCT + 贪心走到终局的 rollout + 特权购买规划；同预算下对 αβ/贪心占优。`@ms` 缺省 4000 |
+| `mcts2[@ms]` | MCTS v2（最优本地棋手）：mcts 同一搜索语义之上跨回合子树复用 —— 上回合选中子树与本回合局面完全一致时直接续搜， 等效提升每步有效 playouts（实测复用命中 64-75%）。同预算 vs mcts 五批独立种子累计 50-34（1000/2000ms）， vs ab 11-1， vs greedy 12-0；`@ms` 缺省 4000。研究报告：`search_research_report.md`，实验台账：`experiments/search/`。A/B：`bun scripts/compare.ts 10 --a mcts2 --baseline mcts` |
 | `llm[:provider/model][@level]` | 大模型棋手 v1；缺省用 `opencode-go/deepseek-v4.1-flash`（OPENCODE_API_KEY）；`@level` 可选 `off/low/medium/high` 控制思考预算（缺省 medium），如 `llm:anthropic/claude-sonnet-4-5@low` |
 | `llm2[:provider/model][@level]` | 大模型棋手 v2（同默认模型/参数），在 v1 之上叠加确定性分析修复实测缺陷：预留评估摘要（黄金=万能/锁卡价值， 按可负担性排序）、行动列表预留按卡去重（金格等价）、送特权拿取内联 ⚠ 标注（3同色/2珍珠）、【对手预留进度】预警（还差几个 token/是否跨胜利线）、规则措辞防误解（黄金是拿入手非支付） |
 | `llm3[:provider/model][@level]` | 大模型棋手 v3（同默认模型/参数），把「记忆与算术」从模型搬进代码（源自 gpt-6.1-sol 败局复盘的 6 个败因）：【流水账】跨回合事件、【目标追踪】按卡 id 跟踪并宣布被截+替代候选、【上回合备忘】make_move 附带 memo 参数→下回合原样注入+提及卡存活核对+防守承诺未兑现⚡、【竞速与阻断】双方 0/1/2 回合胜线与对手 outs 计数（outs≥2 不阻断只抢跑）、【对手路线威胁】三线进度+对手推进卡+0成本清单+⚡处置、【我方中期路线】代码锚定 2-4 回合路线（关键卡失守才换）、【经济】特权/黄金/额外回合差、【牌库匹配】未见高分卡按色+折扣溢出预警、【安全阀】【补货/预留建议】检查项化、⚡情境规则触发时注入。A/B：`bun scripts/compare.ts 6 --a llm3 --baseline llm2 --thinking low` |
@@ -64,8 +66,9 @@ LLM agent 每回合分两个阶段与模型交互（工具全程注册激活， 
 ```text
 src/engine/game.ts    # 规则引擎 (状态/合法行动/applyMove/视图)
 src/engine/cards.ts   # 卡牌数据 (67+4, 与官方 PDF 核对)
-src/agents/           # random / greedy / llm (v1) / llm2 (v2: 预留评估+威胁预警) / llm3 (v3: 跨回合记忆+竞速/经济/牌库评估) agents
-scripts/compare.ts    # 被测 agent(llm2|llm3) vs baseline(llm|llm2|greedy) 批量 A/B 对比, --thinking 控制思考预算(low=4K)
+src/agents/           # random / greedy / ab(αβ) / mcts / mcts2(跨回合子树复用) / llm (v1) / llm2 (v2) / llm3 (v3) agents
+scripts/compare.ts    # 被测 agent(llm2|llm3|mcts2[@ms]) vs baseline(llm|llm2|greedy|ab|mcts) 批量 A/B 对比, --thinking 控制思考预算(low=4K)
+experiments/search/   # 搜索算法研究台账: minimax vs αβ vs MCTS vs 混合(bench.ts + 候选 + 原始数据)
 src/arena.ts          # 对局/锦标赛循环 (headless, 供测试使用)
 src/recorder.ts       # 会话记录 (sessions/*.jsonl) 与确定性重放/resume
 src/web/server.ts     # Bun.serve: 静态页 + REST API
