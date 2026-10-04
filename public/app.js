@@ -150,10 +150,10 @@ function freshUi() {
 const noticeKey = () => `${G.turn}:${G.notice}`;
 /** 有未读的被迫补货提示 (仅自己被迫时弹 modal, bot 被迫只走提示条) */
 const noticePending = () => G.mode === 'human' && !G.over && G.notice && ui.noticeSeen !== noticeKey();
-/** bot 走完后展示其操作回顾 (需要关闭才回到棋盘) */
+/** bot 走完后展示其操作回顾 (需要关闭才回到棋盘); 对局结束时同样弹出, 呈现制胜的最后操作 */
 function revealBotMove() {
   ui = freshUi();
-  ui.showBotMove = !G.over && (G.recentMoves?.length ?? 0) > 0;
+  ui.showBotMove = (G.recentMoves?.length ?? 0) > 0;
   render();
 }
 function canReplenishNow() {
@@ -426,7 +426,7 @@ function renderModals() {
   } else if (myTurn() && ui.action && ui.extrasOpen) {
     renderExtrasModal(box);
     show = true;
-  } else if (myTurn() && ui.showBotMove && (G.recentMoves?.length ?? 0) > 0) {
+  } else if (ui.showBotMove && (G.recentMoves?.length ?? 0) > 0) {
     renderBotMoveModal(box);
     show = true;
   }
@@ -1130,7 +1130,10 @@ function renderNoticeModal(box) {
 
 /** bot 操作回顾: 图示对手最近一轮做了什么 */
 function renderBotMoveModal(box) {
-  modalHead(box, `🤖 ${G.names[1 - G.seat]} 的操作`);
+  let head;
+  if (G.over) head = `${G.draw ? '🤝 和局' : `🏆 ${G.names[G.winner]} 获胜!`} · ${G.names[1 - G.seat]} 的最后操作`;
+  else head = `🤖 ${G.names[1 - G.seat]} 的操作`;
+  modalHead(box, head);
   const list = el('div', 'bot-move-list');
   for (const v of G.recentMoves ?? []) list.append(botMoveRow(v));
   box.append(list);
