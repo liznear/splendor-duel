@@ -23,14 +23,15 @@
   <div id="setup-human" class="setup-body">
     <label>对手 Agent:
       <select id="h-bot">
-        <option value="llm" selected>LLM</option>
+        <option value="llm">LLM</option>
         <option value="llm2">LLM2(改进版)</option>
         <option value="llm3">LLM3(分析增强)</option>
         <option value="greedy">贪心bot</option>
         <option value="random">随机bot</option>
         <option value="ab">αβbot(搜索)</option>
         <option value="mcts">MCTSbot(蒙特卡洛)</option>
-        <option value="mcts2">MCTS2bot(子树复用)</option>
+        <option value="mcts2" selected>MCTS2bot(子树复用)</option>
+        <option value="par-mcts2">ParMCTS2bot(8worker并行)</option>
       </select>
     </label>
     <label class="llm-only">模型 (可选, 如 anthropic/claude-sonnet-4-5):
@@ -43,7 +44,7 @@
       </select>
     </label>
     <label class="search-only">搜索超时 秒 (αβbot/MCTS):
-      <input id="h-search-ms" type="number" min="1" max="120" step="1" value="10">
+      <input id="h-search-ms" type="number" min="1" max="120" step="1" value="20">
     </label>
     <button id="btn-start" class="primary">开始对局</button>
   </div>
@@ -59,6 +60,7 @@
         <option value="ab">αβbot(搜索)</option>
         <option value="mcts">MCTSbot(蒙特卡洛)</option>
         <option value="mcts2">MCTS2bot(子树复用)</option>
+        <option value="par-mcts2">ParMCTS2bot(8worker并行)</option>
       </select>
     </label>
     <label>后手 Agent:
@@ -71,13 +73,14 @@
         <option value="ab">αβbot(搜索)</option>
         <option value="mcts">MCTSbot(蒙特卡洛)</option>
         <option value="mcts2">MCTS2bot(子树复用)</option>
+        <option value="par-mcts2">ParMCTS2bot(8worker并行)</option>
       </select>
     </label>
     <label class="llm-only">LLM 模型 (可选):
       <input id="a-model" placeholder="provider/model, 留空用默认">
     </label>
     <label class="search-only">搜索超时 秒 (αβbot/MCTS):
-      <input id="a-search-ms" type="number" min="1" max="120" step="1" value="10">
+      <input id="a-search-ms" type="number" min="1" max="120" step="1" value="20">
     </label>
     <button id="btn-start-agents" class="primary">开始对局</button>
   </div>

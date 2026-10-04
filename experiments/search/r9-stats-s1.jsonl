@@ -1,0 +1,13 @@
+{"game":1,"seed":38300000,"aSeat":0,"winner":"B","turns":70}
+{"game":2,"seed":38300000,"aSeat":1,"winner":"B","turns":70}
+{"game":3,"seed":38307919,"aSeat":0,"winner":"B","turns":68}
+{"game":4,"seed":38307919,"aSeat":1,"winner":"A","turns":68}
+{"game":5,"seed":38315838,"aSeat":0,"winner":"B","turns":84}
+{"game":6,"seed":38315838,"aSeat":1,"winner":"B","turns":85}
+{"game":7,"seed":38323757,"aSeat":0,"winner":"B","turns":68}
+{"game":8,"seed":38323757,"aSeat":1,"winner":"A","turns":67}
+{"game":9,"seed":38331676,"aSeat":0,"winner":"A","turns":81}
+{"game":10,"seed":38331676,"aSeat":1,"winner":"B","turns":73}
+{"game":11,"seed":38339595,"aSeat":0,"winner":"B","turns":65}
+{"game":12,"seed":38339595,"aSeat":1,"winner":"B","turns":79}
+{"summary":true,"a":"./cand-mcts-par.ts:workers=8","b":"../../src/agents/mcts2.ts:factory=mcts2Agent","aBudget":"1000ms","bBudget":"1000ms","maxTurns":180,"games":12,"aWins":3,"bWins":9,"draws":0,"cappedDraws":0,"illegal":0,"aMsPerMove":916,"bMsPerMove":909,"aPlayoutsPerMove":191471,"bPlayoutsPerMove":47741}

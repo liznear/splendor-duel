@@ -267,7 +267,7 @@ function trySimE(view: GameState, seat: 0 | 1, move: Move): number {
   } catch { return -Infinity; }
 }
 
-function refineConditional(view: GameState, seat: 0 | 1, move: Move): Move {
+export function refineConditional(view: GameState, seat: 0 | 1, move: Move): Move {
   let best = move;
   let bestScore = trySimE(view, seat, move);
   const cands: Move[] = [];
@@ -299,7 +299,7 @@ function refineConditional(view: GameState, seat: 0 | 1, move: Move): Move {
   return best;
 }
 
-function refineReplenish(view: GameState, seat: 0 | 1, move: Move): Move {
+export function refineReplenish(view: GameState, seat: 0 | 1, move: Move): Move {
   const r = trySimE(view, seat, { ...move, replenish: true });
   return r > trySimE(view, seat, move) + 5 ? { ...move, replenish: true } : move;
 }
@@ -317,6 +317,16 @@ export interface Mcts2Stats {
   timeouts: number; // 未用(保持 0)
   playouts: number;
   reusedRoots: number; // 子树复用命中的回合数
+  // 上一步根子统计(供并行 agent 合并; 每步末尾覆写, 纯增量, 不影响原行为)
+  lastRoot?: RootChildStat[];
+}
+
+/** 根子统计(并行合并用): v/priv 定位行动, N/W 与树内 MChild 同义(root 视角) */
+export interface RootChildStat {
+  v: number;
+  priv?: number[];
+  N: number;
+  W: number;
 }
 
 export interface Mcts2Options {
@@ -368,6 +378,7 @@ export function mcts2Agent(opts: Mcts2Options = {}): Agent & { stats: Mcts2Stats
       for (const ch of children) {
         const nn = expandChild(root, ch, me);
         if (nn.terminal === 1) {
+          stats.lastRoot = [{ v: ch.v, priv: ch.privileges, N: 1, W: 1 }];
           const move = refineConditional(ctx.view, me, { action: decodeAction(ch.v), privileges: ch.privileges });
           stats.totalMs += Date.now() - t0;
           return move;
@@ -386,6 +397,7 @@ export function mcts2Agent(opts: Mcts2Options = {}): Agent & { stats: Mcts2Stats
         if (!best.node) expandChild(root, best, me); // 供下回合复用
         prevAnchor = best.node ?? null;
       }
+      stats.lastRoot = children.map((ch) => ({ v: ch.v, priv: ch.privileges, N: ch.N, W: ch.W }));
 
       // 保险丝: 模拟核与引擎分歧时兜底(对拍测试保证不应发生)
       let selected: Move = { action: decodeAction(best.v), privileges: best.privileges };

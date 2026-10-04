@@ -13,6 +13,7 @@ import { greedyAgent } from '../src/agents/greedy.ts';
 import type { AbStats } from '../src/agents/ab.ts';
 import { mctsAgent, type MctsStats } from '../src/agents/mcts.ts';
 import { mcts2Agent } from '../src/agents/mcts2.ts';
+import { parMcts2Agent } from '../src/agents/par-mcts2.ts';
 import type { Agent } from '../src/agents/agent.ts';
 
 
@@ -53,6 +54,7 @@ function makeAgent(spec: string, cfg: CompareCfg, llmLabel: string): Agent & { s
   if (kind === 'greedy') return greedyAgent();
   if (kind === 'mcts') return mctsAgent({ name: 'MCTS', timeMs: specAbMs(spec) });
   if (kind === 'mcts2') return mcts2Agent({ name: 'MCTS2', timeMs: specAbMs(spec) });
+  if (kind === 'par-mcts2') return parMcts2Agent({ name: 'ParMCTS2', timeMs: specAbMs(spec) });
   const make = kind === 'llm' ? llmAgent : kind === 'llm2' ? llm2Agent : llm3Agent;
   return make({ model: cfg.model, name: llmLabel, ...thinking });
 }

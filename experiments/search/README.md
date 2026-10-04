@@ -159,3 +159,33 @@ mcts2 vs mcts 全部新鲜种子累计 50-34(59.5%, 单侧二项检验 p≈0.04,
 测试: `bun test` 78 项通过(新增 test/mcts2.test.ts 5 项: simEq 单元/确定性/复用命中/非法参数)。
 交付: `src/agents/mcts2.ts`(新文件); 注册: server `mcts2[@ms]`(worker 化) + compare.ts
 `--a mcts2 --baseline mcts`(均为纯增量, 未改任何现有 bot 行为)。
+
+### R9 并行 MCTS(根并行, worker 池 + 根子统计合并)(2026-10-04)
+
+假设: 16 核机器上用 N 个 worker 各自完整运行 mcts2(不同种子, 各自保留子树复用),
+父端按根行动合并 ΣN/ΣW 取稳健子, 同墙钟预算下应显著强于单线程 mcts2。
+
+候选: `cand-mcts-par.ts` + `par-worker.ts`(进程级按 n 分池, 每 agent 接管时全体
+re-init 防泄漏)。mcts2.ts 仅加纯增量导出(lastRoot 根子统计 + refine 函数导出)。
+
+| 批 | 对拍 | 比分 | playouts/步 | 备注 |
+|---|---|---|---|---|
+| 首版多数票 | vote vs mcts2@1000 (seed 380/3810万) | 4-8 | 62k vs 16k | 合并方案弃用 |
+| 统计合并 s1 | ΣN vs mcts2@1000 (seed 3830万) | 3-9 | 191k vs 48k | 机器有外部负载 |
+| DIAG1 | ΣN(w=1) vs mcts2@1000 (seed 3840万) | 4-4 | 35k vs 44k | 管线无罪, w=1≈mcts2 |
+| DIAG2b | ΣN(w=8) vs ΣN(w=1) (seed 3860万) | 5-3 | 109k vs 33k | 同管线下并行略强 |
+| confirm | ΣN(w=8) vs mcts2@1000 (seed 3870万) | **7-5** | 233k vs 32k | 干净负载 |
+
+合并口径 w8-vs-mcts2 = 10-14(两批), 批间方差大; 结论: **8 worker 根并行 ≈ 打平
+mcts2, 3-7× playouts 未兑现成胜率**。机制(与 DIAG 一致): ① 8 棵树同先验同 UCT,
+仅 jitter 种子不同, 搜索高度相关 -> 合并 ≈ 等深度单树的信息量(降方差不降偏差);
+② 各 worker 仅当自选着法=实际着法才保住子树复用(~1-2/8 命中), R6 的复用红利被
+稀释 —— 增益与稀释大致相抵。
+
+原始: `r9-vote-a/b.jsonl`(多数票), `r9-stats-s1.jsonl`(统计合并 s1),
+`r9-diag.jsonl`(DIAG1 有效 + DIAG2 无效[共享池串台, 实为 w8-vs-w8]), `r9-diag2b.jsonl`,
+`r9-confirm-w8-vs-mcts2.jsonl`。交付(体验用, 非最强): `src/agents/par-mcts2.ts` + 注册。
+
+教训: 多数票合并有害(放大贪心共识); 相关树并行无红利。若要继续该方向:
+decorrelate(每 worker 不同 uctC/jitter 组合) 或共享树+虚损(需扁平节点数组, 大改)。
+当前倾向: 单树提速(Rust/WASM 移植 Sim 核)更直接 —— 加深同一棵树无相关性损失。

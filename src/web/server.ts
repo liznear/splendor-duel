@@ -6,6 +6,7 @@ import {
 import { randomAgent } from '../agents/random.js';
 import { greedyAgent } from '../agents/greedy.js';
 import { workerSearchAgent } from '../agents/search-agent.js';
+import { parMcts2Agent } from '../agents/par-mcts2.js';
 import { llmAgent } from '../agents/llm.js';
 import { llm2Agent } from '../agents/llm2.js';
 import { llm3Agent } from '../agents/llm3.js';
@@ -57,6 +58,10 @@ function makeBot(spec: string, onThinking?: (name: string, text: string) => void
     case 'mcts2': {
       // 后缀 @ms 控制每步搜索时间上限: ab / ab@3000 / mcts / mcts@3000 / mcts2; 搜索在 worker 子线程
       return workerSearchAgent(spec, kind === 'ab' ? 'αβbot' : kind === 'mcts' ? 'MCTSbot' : 'MCTS2bot');
+    }
+    case 'par-mcts2': {
+      // 并行版: 父端只做 IPC+合并不阻塞事件循环, 直接在主进程跑(自带 worker 池)
+      return parMcts2Agent({ timeMs: arg ? Number(arg) : undefined, name: `ParMCTS2bot(8w${arg ? `·${Math.round(Number(arg) / 1000)}s` : ''})` });
     }
     case 'greedy': return greedyAgent();
     case 'llm':

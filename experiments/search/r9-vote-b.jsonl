@@ -1,0 +1,7 @@
+{"game":1,"seed":38100000,"aSeat":0,"winner":"B","turns":67}
+{"game":2,"seed":38100000,"aSeat":1,"winner":"B","turns":73}
+{"game":3,"seed":38107919,"aSeat":0,"winner":"B","turns":71}
+{"game":4,"seed":38107919,"aSeat":1,"winner":"A","turns":79}
+{"game":5,"seed":38115838,"aSeat":0,"winner":"B","turns":66}
+{"game":6,"seed":38115838,"aSeat":1,"winner":"B","turns":82}
+{"summary":true,"a":"./cand-mcts-par.ts:workers=8","b":"../../src/agents/mcts2.ts:factory=mcts2Agent","aBudget":"1000ms","bBudget":"1000ms","maxTurns":180,"games":6,"aWins":1,"bWins":5,"draws":0,"cappedDraws":0,"illegal":0,"aMsPerMove":949,"bMsPerMove":927,"aPlayoutsPerMove":61590,"bPlayoutsPerMove":11996}

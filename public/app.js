@@ -319,11 +319,11 @@ function llmSpec(sel, modelInput) {
   return m ? `${v}:${m}` : v;
 }
 
-/** 搜索型 bot 的 spec: 拼上界面里配置的每步超时秒数 (默认 10s) */
+/** 搜索型 bot 的 spec: 拼上界面里配置的每步超时秒数 (默认 20s) */
 function searchSpec(sel, msInput) {
   const v = $(sel).value;
-  if (v !== 'ab' && v !== 'mcts') return v;
-  const ms = Math.max(1, Number($(msInput).value) || 10) * 1000;
+  if (v !== 'ab' && v !== 'mcts' && v !== 'mcts2' && v !== 'par-mcts2') return v;
+  const ms = Math.max(1, Number($(msInput).value) || 20) * 1000;
   return `${v}@${ms}`;
 }
 
