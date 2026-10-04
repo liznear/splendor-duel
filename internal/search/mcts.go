@@ -219,6 +219,11 @@ func (sess *Session) searchMCTS(ctx context.Context, s *game.State, includeRefil
 	visits := 0
 	wins := float64(-1)
 	stats := &Stats{}
+	if len(order) > 0 {
+		// Root moves are score ordered and obey the MCTS action policy even
+		// when the deadline leaves no time to complete a simulation.
+		fallback = merged[order[0]].move
+	}
 	for _, key := range order {
 		r := merged[key]
 		stats.Simulations += r.visits

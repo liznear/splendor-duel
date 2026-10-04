@@ -5,7 +5,7 @@ import "testing"
 func TestRefillConfiguration(t *testing.T) {
 	for _, spec := range []string{"mcts", "mcts/8@1000", "par-mcts2@5000"} {
 		c, err := Parse(spec)
-		if err != nil || c.IncludeRefill {
+		if err != nil || !c.IncludeRefill {
 			t.Fatalf("default refill config for %s: %+v, %v", spec, c, err)
 		}
 	}

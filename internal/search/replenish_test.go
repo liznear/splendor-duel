@@ -22,19 +22,15 @@ func replenishmentWinPosition() *game.State {
 	return s
 }
 
-func importRefillSim(s *game.State) *simState {
-	v := importSim(s)
-	v.includeRefill = true
-	return v
-}
-
-func TestSimVoluntaryRefillDisabledByDefault(t *testing.T) {
+func TestSimVoluntaryRefillEnabledByDefault(t *testing.T) {
 	sim := importSim(replenishmentWinPosition())
 	var scratch [simMaxMoves]simMove
+	found := false
 	for _, m := range sim.ready(scratch[:0]) {
-		if m.replenish {
-			t.Fatal("voluntary replenishment must be disabled by default")
-		}
+		found = found || m.replenish
+	}
+	if !found {
+		t.Fatal("restricted voluntary replenishment must be enabled by default")
 	}
 }
 
@@ -45,7 +41,7 @@ func TestSimForcedRefillWithDefaultPolicy(t *testing.T) {
 	var scratch [simMaxMoves]simMove
 	moves := sim.ready(scratch[:0])
 	if len(moves) == 0 {
-		t.Fatal("disabled voluntary refill also disabled forced refill")
+		t.Fatal("default policy disabled forced refill")
 	}
 	for _, m := range moves {
 		if !m.replenish {
@@ -64,7 +60,7 @@ func TestSimReplenishmentMatchesEngine(t *testing.T) {
 	rng := rand.New(rand.NewPCG(19, 47))
 	for seed := int64(0); seed < 8; seed++ {
 		reference := game.New(seed, [2]string{"A", "B"}, nil)
-		sim := importRefillSim(reference)
+		sim := importSim(reference)
 		var scratch [simMaxMoves]simMove
 		for step := 0; step < 120 && !reference.Over(); step++ {
 			legal := game.LegalMoves(reference)
@@ -96,7 +92,7 @@ func TestSimReplenishmentMatchesEngine(t *testing.T) {
 				}
 				next := *sim
 				next.apply(m)
-				if !reflect.DeepEqual(&next, importRefillSim(expected)) {
+				if !reflect.DeepEqual(&next, importSim(expected)) {
 					t.Fatalf("seed=%d step=%d divergent move %+v", seed, step, move)
 				}
 			}
@@ -117,7 +113,7 @@ func TestSimReplenishmentMatchesEngine(t *testing.T) {
 func TestSimNoVoluntaryReplenishmentWithEmptyBag(t *testing.T) {
 	s := replenishmentWinPosition()
 	s.Bag = nil
-	sim := importRefillSim(s)
+	sim := importSim(s)
 	var scratch [simMaxMoves]simMove
 	for _, move := range sim.ready(scratch[:0]) {
 		if decodeSimMove(move).Replenish {
@@ -129,7 +125,7 @@ func TestSimNoVoluntaryReplenishmentWithEmptyBag(t *testing.T) {
 func TestSimForcedReplenishmentIsAnExplicitBranch(t *testing.T) {
 	s := replenishmentWinPosition()
 	s.Board = [25]game.Color{}
-	sim := importRefillSim(s)
+	sim := importSim(s)
 	before := *sim
 	var scratch [simMaxMoves]simMove
 	moves := sim.ready(scratch[:0])
@@ -147,7 +143,7 @@ func TestSimForcedReplenishmentIsAnExplicitBranch(t *testing.T) {
 		next := *sim
 		next.apply(m)
 		expected, err := game.Apply(s, move)
-		if err != nil || !reflect.DeepEqual(&next, importRefillSim(expected)) {
+		if err != nil || !reflect.DeepEqual(&next, importSim(expected)) {
 			t.Fatalf("forced branch diverged: %+v, %v", move, err)
 		}
 	}
@@ -155,7 +151,7 @@ func TestSimForcedReplenishmentIsAnExplicitBranch(t *testing.T) {
 
 func TestSimGeneratesVoluntaryReplenishment(t *testing.T) {
 	s := replenishmentWinPosition()
-	sim := importRefillSim(s)
+	sim := importSim(s)
 	before := *sim
 	var scratch [simMaxMoves]simMove
 	moves := sim.ready(scratch[:0])
@@ -173,7 +169,7 @@ func TestSimGeneratesVoluntaryReplenishment(t *testing.T) {
 		if err != nil {
 			t.Fatalf("illegal search branch %+v: %v", move, err)
 		}
-		if !reflect.DeepEqual(&next, importRefillSim(expected)) {
+		if !reflect.DeepEqual(&next, importSim(expected)) {
 			t.Fatalf("simulation diverged from engine for %+v", move)
 		}
 		if move.Replenish && expected.Winner != nil && *expected.Winner == s.Current {

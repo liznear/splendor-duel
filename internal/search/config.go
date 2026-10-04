@@ -9,10 +9,12 @@ import (
 )
 
 type Config struct {
-	Kind          string `json:"kind"`
-	TimeMS        int    `json:"timeMs,omitempty"`
-	Parallelism   int    `json:"parallelism,omitempty"`
-	IncludeRefill bool   `json:"includeRefill,omitempty"`
+	Kind        string `json:"kind"`
+	TimeMS      int    `json:"timeMs,omitempty"`
+	Parallelism int    `json:"parallelism,omitempty"`
+
+	// IncludeRefill is retained for compatibility; MCTS always enables restricted refill.
+	IncludeRefill bool `json:"includeRefill,omitempty"`
 }
 
 func Parse(spec string) (Config, error) {
@@ -69,6 +71,9 @@ func Normalize(c Config) (Config, error) {
 	}
 	if c.IncludeRefill && c.Kind != "mcts" {
 		return c, errors.New("includeRefill is only supported by MCTS")
+	}
+	if c.Kind == "mcts" {
+		c.IncludeRefill = true
 	}
 	if c.TimeMS == 0 {
 		c.TimeMS = 4000

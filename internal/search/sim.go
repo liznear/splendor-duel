@@ -66,7 +66,7 @@ func simColor(c game.Color) int {
 	return simEmpty
 }
 func importSim(s *game.State) *simState {
-	v := &simState{current: s.Current, extraTurns: s.ExtraTurns, turn: s.Turn, winner: -1, draw: s.Draw, rngState: s.RNGState, bagN: len(s.Bag), royalN: len(s.Royals)}
+	v := &simState{current: s.Current, extraTurns: s.ExtraTurns, turn: s.Turn, winner: -1, draw: s.Draw, rngState: s.RNGState, bagN: len(s.Bag), royalN: len(s.Royals), includeRefill: true}
 	if s.Winner != nil {
 		v.winner = *s.Winner
 	}
@@ -491,12 +491,29 @@ func (s *simState) replenish() {
 }
 func (s *simState) ready(out []simMove) []simMove {
 	moves := s.moves(out)
-	if s.bagN > 0 && (s.includeRefill || len(moves) == 0) {
+	canRefill := len(moves) == 0
+	if s.includeRefill && !canRefill {
+		tokens := 0
+		for _, g := range s.board {
+			if g != simEmpty && g != simGold {
+				tokens++
+			}
+		}
+		canRefill = tokens <= 3
+		for _, m := range moves {
+			if m.action&3 == 2 {
+				canRefill = false
+				break
+			}
+		}
+	}
+	moves = s.filterTokenTakes(moves)
+	if s.bagN > 0 && canRefill {
 		// Replenishment is optional even when an ordinary action is available.
 		// Generate on a copy so unchosen branches retain the original board/RNG.
 		next := *s
 		next.replenish()
-		alternatives := next.moves(moves[len(moves):])
+		alternatives := next.filterTokenTakes(next.moves(moves[len(moves):]))
 		for i := range alternatives {
 			alternatives[i].replenish = true
 		}
@@ -506,6 +523,58 @@ func (s *simState) ready(out []simMove) []simMove {
 		s.draw = true
 	}
 	return moves
+}
+
+// Smaller takes remain available when every maximum-size take gives a privilege.
+// Ordinary and replenished boards are filtered independently; buys/reserves stay.
+func (s *simState) filterTokenTakes(moves []simMove) []simMove {
+	count := func(action uint32) int {
+		if action&3 != 0 {
+			return 0
+		}
+		if action>>12&31 != 0 {
+			return 3
+		}
+		if action>>7&31 != 0 {
+			return 2
+		}
+		return 1
+	}
+	maximum := 0
+	maximumWithoutPrivilege := 0
+	for _, m := range moves {
+		n := count(m.action)
+		maximum = max(maximum, n)
+		if n == 0 {
+			continue
+		}
+		first, pearls, same := simEmpty, 0, true
+		for i := 0; i < n; i++ {
+			cell := int(m.action>>uint(2+5*i)&31) - 1
+			color := s.board[cell]
+			if i == 0 {
+				first = color
+			} else if color != first {
+				same = false
+			}
+			if color == simPearl {
+				pearls++
+			}
+		}
+		if !(n == 3 && same || pearls >= 2) {
+			maximumWithoutPrivilege = max(maximumWithoutPrivilege, n)
+		}
+	}
+	if maximumWithoutPrivilege < maximum {
+		return moves
+	}
+	out := moves[:0]
+	for _, m := range moves {
+		if n := count(m.action); n == 0 || n == maximum {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 type simScorer struct {

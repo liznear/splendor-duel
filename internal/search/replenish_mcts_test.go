@@ -22,12 +22,12 @@ func TestMCTSChoosesVoluntaryReplenishmentWin(t *testing.T) {
 	}
 }
 
-func TestMCTSRefillDisabledByDefault(t *testing.T) {
+func TestMCTSChoosesVoluntaryReplenishmentWinByDefault(t *testing.T) {
 	for _, workers := range []int{1, 8} {
 		s := replenishmentWinPosition()
 		move, _, err := ChooseWithStats(context.Background(), s, Config{Kind: "mcts", Parallelism: workers, TimeMS: 30})
-		if err != nil || move.Replenish {
-			t.Fatalf("workers=%d default search refilled: %+v, %v", workers, move, err)
+		if err != nil || !move.Replenish {
+			t.Fatalf("workers=%d default search missed refill: %+v, %v", workers, move, err)
 		}
 		if _, err := game.Apply(s, move); err != nil {
 			t.Fatal(err)
@@ -45,7 +45,6 @@ func TestMCTSWorkersUseFullStateAndRefillPolicy(t *testing.T) {
 		}
 		for i, tr := range sess.trees {
 			want := importSim(s)
-			want.includeRefill = enabled
 			if tr == nil || !reflect.DeepEqual(tr.trunk, want) {
 				t.Fatalf("worker %d does not match full state/refill policy", i)
 			}
@@ -53,8 +52,8 @@ func TestMCTSWorkersUseFullStateAndRefillPolicy(t *testing.T) {
 			for _, e := range tr.root.children {
 				found = found || e.move.replenish
 			}
-			if found != enabled {
-				t.Fatalf("worker %d refill branches=%v, want %v", i, found, enabled)
+			if !found {
+				t.Fatalf("worker %d missing default refill branches", i)
 			}
 		}
 	}
