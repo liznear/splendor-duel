@@ -6,18 +6,19 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"slices"
 	"sync"
 
 	"splender/internal/game"
 )
 
 type node struct {
-	state    *game.State
+	state    *simState
 	children []*edge
 	visits   int
 }
 type edge struct {
-	move   game.Move
+	move   simMove
 	child  *node
 	visits int
 	wins   float64
@@ -29,67 +30,25 @@ type rootStat struct {
 }
 
 func expand(n *node) {
-	n.state = ready(n.state)
-	if n.state.Over() {
+	if n.state.over() {
 		return
 	}
-	moves := orderedMoves(n.state)
+	var scratch [simMaxMoves]simMove
+	moves := n.state.ready(scratch[:0])
+	slices.SortStableFunc(moves, func(a, b simMove) int { return cmpScore(n.state.score(b), n.state.score(a)) })
 	for _, m := range moves {
 		n.children = append(n.children, &edge{move: m})
 	}
 }
-func rollout(ctx context.Context, s *game.State, seat int, r *rand.Rand) float64 {
-	for i := 0; i < 160 && !s.Over(); i++ {
-		if ctx.Err() != nil {
-			break
-		}
-		s = ready(s)
-		if s.Over() {
-			break
-		}
-		moves := candidates(s)
-		if len(moves) == 0 {
-			break
-		}
-		best := moves[0]
-		v := math.Inf(-1)
-		for _, m := range moves {
-			if ctx.Err() != nil {
-				break
-			}
-			n := score(s, m) + r.Float64()*4
-			if n > v {
-				v = n
-				best = m
-			}
-		}
-		next, err := game.Apply(s, best)
-		if err != nil {
-			break
-		}
-		next.Log = nil
-		s = next
-	}
-	if s.Winner != nil {
-		if *s.Winner == seat {
-			return 1
-		}
-		return 0
-	}
-	if s.Draw {
-		return .5
-	}
-	return .5 + .45*math.Tanh(symmetric(s, seat)/600)
-}
 func mcts(ctx context.Context, s *game.State, seed uint64) []rootStat {
 	r := rand.New(rand.NewPCG(seed, seed+71))
-	root := &node{state: s}
+	root := &node{state: importSim(s)}
 	expand(root)
 	for ctx.Err() == nil {
 		n := root
 		path := []*edge{}
 		nodes := []*node{root}
-		for !n.state.Over() {
+		for !n.state.over() {
 			if n.children == nil {
 				expand(n)
 			}
@@ -102,7 +61,7 @@ func mcts(ctx context.Context, s *game.State, seed uint64) []rootStat {
 				uct := math.Inf(1)
 				if e.visits > 0 {
 					value := e.wins / float64(e.visits)
-					if n.state.Current != s.Current {
+					if n.state.current != s.Current {
 						value = 1 - value
 					}
 					uct = value + 1.4*math.Sqrt(math.Log(float64(n.visits+1))/float64(e.visits))
@@ -115,12 +74,9 @@ func mcts(ctx context.Context, s *game.State, seed uint64) []rootStat {
 			path = append(path, pick)
 			fresh := pick.child == nil
 			if fresh {
-				next, err := game.Apply(n.state, pick.move)
-				if err != nil {
-					break
-				}
-				next.Log = nil
-				pick.child = &node{state: next}
+				next := *n.state
+				next.apply(pick.move)
+				pick.child = &node{state: &next}
 			}
 			n = pick.child
 			nodes = append(nodes, n)
@@ -131,7 +87,7 @@ func mcts(ctx context.Context, s *game.State, seed uint64) []rootStat {
 				break
 			}
 		}
-		value := rollout(ctx, n.state, s.Current, r)
+		value := simRollout(ctx, n.state, s.Current, r)
 		if ctx.Err() != nil {
 			break
 		}
@@ -145,7 +101,7 @@ func mcts(ctx context.Context, s *game.State, seed uint64) []rootStat {
 	}
 	out := []rootStat{}
 	for _, e := range root.children {
-		out = append(out, rootStat{e.move, e.visits, e.wins})
+		out = append(out, rootStat{decodeSimMove(e.move), e.visits, e.wins})
 	}
 	return out
 }

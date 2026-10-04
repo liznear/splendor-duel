@@ -41,9 +41,9 @@ go run ./cmd/arena -games 10 -jobs 2 -a mcts@1000 -baseline greedy
 go run ./cmd/arena -games 10 -jobs 2 -a ab@1000 -baseline greedy
 ```
 
-`@1000` is a per-move wall-clock budget in milliseconds (default 4000; maximum 120000). `mcts/8@1000` runs eight independent search trees in goroutines and merges root visits. `-jobs` runs multiple matches in goroutines. Alpha-beta uses iterative deepening through depth four; MCTS uses UCT and greedy rollouts. Both use the same Go rule engine as the server.
+`@1000` is a per-move wall-clock budget in milliseconds (default 4000; maximum 120000). `mcts/8@1000` runs eight independent search trees in goroutines and merges root visits. `-jobs` runs multiple matches in goroutines. Alpha-beta uses iterative deepening through depth four; MCTS uses UCT and greedy rollouts. Alpha-beta uses the server’s immutable Go rule engine. MCTS uses a compact simulation kernel with array-based state, encoded moves, and direct heuristic scoring; seeded differential tests check its generated moves and transitions against the authoritative engine.
 
-The browser still offers human play, step/auto agent play, and saved-session resume. Only its transport adapter and the removed agent controls changed. Old `ab`, `mcts2`, and `par-mcts2` specs are compatibility aliases for alpha-beta, MCTS, and parallel MCTS respectively. The Go MCTS is a new implementation: it does not retain the TypeScript MCTS2 subtree reuse or its specialized simulation kernel; historical strength measurements apply to the TypeScript agents.
+The browser still offers human play, step/auto agent play, and saved-session resume. Only its transport adapter and the removed agent controls changed. Old `ab`, `mcts2`, and `par-mcts2` specs are compatibility aliases for alpha-beta, MCTS, and parallel MCTS respectively. The Go MCTS ports the TypeScript compact-kernel approach, but does not retain MCTS2 subtree reuse. Historical strength measurements apply to the TypeScript agents. Run `go test ./internal/search -run '^$' -bench 'Benchmark(Rollout|MCTS)$' -benchmem` to measure Go rollout cost and search throughput on the saved single-token position.
 
 ## Layout
 
