@@ -1,0 +1,168 @@
+{
+  "matches": {
+    "matches-1000ms.jsonl:batch2": {
+      "games": 6,
+      "seedPairs": 3,
+      "wins": 2,
+      "losses": 4,
+      "draws": 0,
+      "score": 0.3333333333333333,
+      "pairedBootstrap95": [
+        0.0,
+        0.5
+      ],
+      "candidateRollouts": 3492518,
+      "baselineRollouts": 2851777,
+      "candidateTraversals": 1746259,
+      "baselineTraversals": 2851777,
+      "elapsedSeconds": 380.330413,
+      "meanTurns": 63.166666666666664
+    },
+    "matches-1000ms.jsonl:batch4": {
+      "games": 6,
+      "seedPairs": 3,
+      "wins": 1,
+      "losses": 5,
+      "draws": 0,
+      "score": 0.16666666666666666,
+      "pairedBootstrap95": [
+        0.0,
+        0.5
+      ],
+      "candidateRollouts": 4733140,
+      "baselineRollouts": 3572726,
+      "candidateTraversals": 1183285,
+      "baselineTraversals": 3572726,
+      "elapsedSeconds": 415.36043800000004,
+      "meanTurns": 69
+    },
+    "matches-1024rollouts.jsonl:batch2": {
+      "games": 12,
+      "seedPairs": 6,
+      "wins": 5,
+      "losses": 7,
+      "draws": 0,
+      "score": 0.4166666666666667,
+      "pairedBootstrap95": [
+        0.16666666666666666,
+        0.6666666666666666
+      ],
+      "candidateRollouts": 417792,
+      "baselineRollouts": 417792,
+      "candidateTraversals": 208896,
+      "baselineTraversals": 417792,
+      "elapsedSeconds": 105.139023,
+      "meanTurns": 67.83333333333333
+    },
+    "matches-1024rollouts.jsonl:batch4": {
+      "games": 12,
+      "seedPairs": 6,
+      "wins": 4,
+      "losses": 8,
+      "draws": 0,
+      "score": 0.3333333333333333,
+      "pairedBootstrap95": [
+        0.08333333333333333,
+        0.6666666666666666
+      ],
+      "candidateRollouts": 424960,
+      "baselineRollouts": 422912,
+      "candidateTraversals": 106240,
+      "baselineTraversals": 422912,
+      "elapsedSeconds": 107.134719,
+      "meanTurns": 69
+    },
+    "matches-200ms.jsonl:batch2": {
+      "games": 12,
+      "seedPairs": 6,
+      "wins": 5,
+      "losses": 7,
+      "draws": 0,
+      "score": 0.4166666666666667,
+      "pairedBootstrap95": [
+        0.16666666666666666,
+        0.6666666666666666
+      ],
+      "candidateRollouts": 1616122,
+      "baselineRollouts": 1386308,
+      "candidateTraversals": 808061,
+      "baselineTraversals": 1386308,
+      "elapsedSeconds": 159.768087,
+      "meanTurns": 66.33333333333333
+    },
+    "matches-200ms.jsonl:batch4": {
+      "games": 12,
+      "seedPairs": 6,
+      "wins": 3,
+      "losses": 9,
+      "draws": 0,
+      "score": 0.25,
+      "pairedBootstrap95": [
+        0.08333333333333333,
+        0.4166666666666667
+      ],
+      "candidateRollouts": 1890036,
+      "baselineRollouts": 1273782,
+      "candidateTraversals": 472509,
+      "baselineTraversals": 1273782,
+      "elapsedSeconds": 165.361754,
+      "meanTurns": 68.58333333333333
+    }
+  },
+  "positions": {
+    "0ms:batch1": {
+      "searches": 21,
+      "medianRolloutsPerSecond": 5691.655665948725,
+      "medianTraversalsPerSecond": 5691.655665948725,
+      "medianPairedThroughputRatio": 1.0
+    },
+    "0ms:batch2": {
+      "searches": 21,
+      "medianRolloutsPerSecond": 5057.939087397631,
+      "medianTraversalsPerSecond": 2528.9695436988154,
+      "medianPairedThroughputRatio": 1.0612167502902858
+    },
+    "0ms:batch4": {
+      "searches": 21,
+      "medianRolloutsPerSecond": 5089.286158036251,
+      "medianTraversalsPerSecond": 1272.3215395090629,
+      "medianPairedThroughputRatio": 1.0686712671090108
+    },
+    "200ms:batch1": {
+      "searches": 21,
+      "medianRolloutsPerSecond": 4930.278884462151,
+      "medianTraversalsPerSecond": 4930.278884462151,
+      "medianPairedThroughputRatio": 1.0
+    },
+    "200ms:batch2": {
+      "searches": 21,
+      "medianRolloutsPerSecond": 5957.7568097559515,
+      "medianTraversalsPerSecond": 2978.8784048779758,
+      "medianPairedThroughputRatio": 1.07676989256933
+    },
+    "200ms:batch4": {
+      "searches": 21,
+      "medianRolloutsPerSecond": 6257.504272141651,
+      "medianTraversalsPerSecond": 1564.3760680354128,
+      "medianPairedThroughputRatio": 1.0896926552338142
+    },
+    "1000ms:batch1": {
+      "searches": 21,
+      "medianRolloutsPerSecond": 5053.977721322649,
+      "medianTraversalsPerSecond": 5053.977721322649,
+      "medianPairedThroughputRatio": 1.0
+    },
+    "1000ms:batch2": {
+      "searches": 21,
+      "medianRolloutsPerSecond": 5255.986956995471,
+      "medianTraversalsPerSecond": 2627.9934784977354,
+      "medianPairedThroughputRatio": 1.1400233329937328
+    },
+    "1000ms:batch4": {
+      "searches": 21,
+      "medianRolloutsPerSecond": 6112.778565695878,
+      "medianTraversalsPerSecond": 1528.1946414239694,
+      "medianPairedThroughputRatio": 1.2352629697589392
+    }
+  }
+}
