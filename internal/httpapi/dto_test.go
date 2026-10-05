@@ -11,13 +11,11 @@ import (
 )
 
 func TestAgentSpecEnablesRestrictedRefillOnResume(t *testing.T) {
-	for _, enabled := range []bool{false, true} {
-		c := search.Config{Kind: "mcts", TimeMS: 1000, Parallelism: 8, IncludeRefill: enabled}
-		parsed, err := search.Parse(spec(c))
-		c.IncludeRefill = true
-		if err != nil || parsed != c {
-			t.Fatalf("agent spec loses restricted refill policy: %+v, %v", parsed, err)
-		}
+	c := search.Config{Kind: "mcts", TimeMS: 1000, Parallelism: 8}
+	parsed, err := search.Parse(spec(c))
+	c.RefillTurn = search.DefaultRefillTurn
+	if err != nil || parsed != c {
+		t.Fatalf("agent spec loses refill policy: %+v, %v", parsed, err)
 	}
 }
 

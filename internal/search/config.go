@@ -13,8 +13,9 @@ type Config struct {
 	TimeMS      int    `json:"timeMs,omitempty"`
 	Parallelism int    `json:"parallelism,omitempty"`
 
-	// IncludeRefill is retained for compatibility; MCTS always enables restricted refill.
-	IncludeRefill bool `json:"includeRefill,omitempty"`
+	// RefillTurn is the turn from which voluntary (anytime) replenishment
+	// branches are modeled. 0 means the default (DefaultRefillTurn).
+	RefillTurn int `json:"refillTurn,omitempty"`
 }
 
 func Parse(spec string) (Config, error) {
@@ -23,11 +24,9 @@ func Parse(spec string) (Config, error) {
 		return Config{}, errors.New("invalid agent spec")
 	}
 	c := Config{Kind: parts[0]}
-	if kind, option, hasOption := strings.Cut(c.Kind, "+"); hasOption {
-		if option != "refill" {
-			return c, errors.New("unsupported agent option")
-		}
-		c.Kind, c.IncludeRefill = kind, true
+	option := ""
+	if kind, opt, hasOption := strings.Cut(c.Kind, "+"); hasOption {
+		c.Kind, option = kind, opt
 	}
 	if kind, count, hasWorkers := strings.Cut(c.Kind, "/"); hasWorkers {
 		switch kind {
@@ -56,6 +55,21 @@ func Parse(spec string) (Config, error) {
 		c.Kind = "mcts"
 		c.Parallelism = min(8, runtime.GOMAXPROCS(0))
 	}
+	if option != "" {
+		// "+refill" is kept for old session specs; only the :turn suffix carries
+		// information now that MCTS always models restricted refill.
+		name, turn, hasTurn := strings.Cut(option, ":")
+		if name != "refill" || c.Kind != "mcts" {
+			return c, errors.New("unsupported agent option")
+		}
+		if hasTurn {
+			turn, err := strconv.Atoi(turn)
+			if err != nil || turn < 1 || turn > 1000 {
+				return c, errors.New("invalid refill turn")
+			}
+			c.RefillTurn = turn
+		}
+	}
 	if len(parts) == 2 {
 		ms, err := strconv.Atoi(parts[1])
 		if err != nil {
@@ -69,11 +83,15 @@ func Normalize(c Config) (Config, error) {
 	if c.Kind != "greedy" && c.Kind != "alpha-beta" && c.Kind != "mcts" {
 		return c, fmt.Errorf("unsupported agent: %s", c.Kind)
 	}
-	if c.IncludeRefill && c.Kind != "mcts" {
-		return c, errors.New("includeRefill is only supported by MCTS")
-	}
 	if c.Kind == "mcts" {
-		c.IncludeRefill = true
+		if c.RefillTurn == 0 {
+			c.RefillTurn = DefaultRefillTurn
+		}
+	} else if c.RefillTurn != 0 {
+		return c, errors.New("refillTurn is only supported by MCTS")
+	}
+	if c.RefillTurn < 0 || c.RefillTurn > 1000 {
+		return c, errors.New("refillTurn must be 1..1000")
 	}
 	if c.TimeMS == 0 {
 		c.TimeMS = 4000

@@ -58,6 +58,35 @@ func TestMCTSRestrictedVoluntaryRefill(t *testing.T) {
 	}
 }
 
+func TestSimVoluntaryRefillOpensAfterTurn30(t *testing.T) {
+	base := func() *simState {
+		s := importSim(replenishmentWinPosition())
+		for i := range s.board {
+			s.board[i] = simEmpty
+		}
+		for i := 0; i < 10; i++ {
+			s.board[i] = i % 5
+		}
+		s.pyramid[0].cost = [6]int{} // an ordinary buy stays available
+		return s
+	}
+	var scratch [simMaxMoves]simMove
+	for _, tc := range []struct {
+		turn int
+		want bool
+	}{{29, false}, {30, true}} {
+		s := base()
+		s.turn = tc.turn
+		found := false
+		for _, m := range s.ready(scratch[:0]) {
+			found = found || m.replenish
+		}
+		if found != tc.want {
+			t.Fatalf("turn %d: refill=%v, want %v", tc.turn, found, tc.want)
+		}
+	}
+}
+
 func TestMCTSOnlyTakesMaximumAvailableTokens(t *testing.T) {
 	for _, cells := range [][]int{{0, 1, 2, 24}, {0, 1, 24}, {0, 24}} {
 		s := importSim(replenishmentWinPosition())
@@ -136,7 +165,7 @@ func TestMCTSZeroSimulationFallbackUsesMaximumTake(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	fallback := game.Move{Action: game.Action{Kind: "take", Cells: []int{24}}}
-	m, stats := NewSession(1).searchMCTS(ctx, s, true, fallback)
+	m, stats := NewSession(1).searchMCTS(ctx, s, DefaultRefillTurn, fallback)
 	if m.Action.Kind != "take" || len(m.Action.Cells) != 3 || stats.Simulations != 0 {
 		t.Fatalf("invalid zero-simulation fallback: %+v, %+v", m, stats)
 	}

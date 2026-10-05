@@ -141,9 +141,9 @@ func (sess *Session) Choose(ctx context.Context, s *game.State, c Config) (game.
 
 // initTree restores worker i's tree, discarding any that drifted from the
 // live state (a move or option that Step never observed).
-func (sess *Session) initTree(i int, s *game.State, includeRefill bool) {
+func (sess *Session) initTree(i int, s *game.State, refillTurn int) {
 	live := importSim(s)
-	live.includeRefill = includeRefill
+	live.refillTurn = refillTurn
 	t := sess.trees[i]
 	if t != nil && !reflect.DeepEqual(t.trunk, live) {
 		t = nil
@@ -185,7 +185,7 @@ func (sess *Session) Reset() {
 		sess.trees[i] = nil
 	}
 }
-func (sess *Session) searchMCTS(ctx context.Context, s *game.State, includeRefill bool, fallback game.Move) (game.Move, *Stats) {
+func (sess *Session) searchMCTS(ctx context.Context, s *game.State, refillTurn int, fallback game.Move) (game.Move, *Stats) {
 	if sess.seat != s.Current {
 		sess.Reset()
 		sess.seat = s.Current
@@ -196,7 +196,7 @@ func (sess *Session) searchMCTS(ctx context.Context, s *game.State, includeRefil
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			sess.initTree(i, s, includeRefill)
+			sess.initTree(i, s, refillTurn)
 			sd := uint64(i) + uint64(s.Turn)*100 + 3
 			results <- runMCTS(ctx, sess.trees[i].root, sess.trees[i].trunk, s.Current, rand.New(rand.NewPCG(sd, sd+71)))
 		}(i)

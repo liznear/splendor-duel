@@ -11,7 +11,7 @@ import (
 func TestMCTSChoosesVoluntaryReplenishmentWin(t *testing.T) {
 	for _, workers := range []int{1, 8} {
 		s := replenishmentWinPosition()
-		move, _, err := ChooseWithStats(context.Background(), s, Config{Kind: "mcts", Parallelism: workers, TimeMS: 100, IncludeRefill: true})
+		move, _, err := ChooseWithStats(context.Background(), s, Config{Kind: "mcts", Parallelism: workers, TimeMS: 100})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -38,8 +38,8 @@ func TestMCTSChoosesVoluntaryReplenishmentWinByDefault(t *testing.T) {
 func TestMCTSWorkersUseFullStateAndRefillPolicy(t *testing.T) {
 	s := replenishmentWinPosition()
 	sess := NewSession(3)
-	for _, enabled := range []bool{false, true, false} {
-		_, _, err := sess.Choose(context.Background(), s, Config{Kind: "mcts", Parallelism: 3, TimeMS: 30, IncludeRefill: enabled})
+	for i := 0; i < 3; i++ {
+		_, _, err := sess.Choose(context.Background(), s, Config{Kind: "mcts", Parallelism: 3, TimeMS: 30})
 		if err != nil {
 			t.Fatal(err)
 		}

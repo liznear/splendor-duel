@@ -178,9 +178,6 @@ func spec(c search.Config) string {
 	if c.Kind == "greedy" {
 		return kind
 	}
-	if c.IncludeRefill {
-		kind += "+refill"
-	}
 	return fmt.Sprintf("%s@%d", kind, c.TimeMS)
 }
 func (s *Service) get(id string) (*match, error) {

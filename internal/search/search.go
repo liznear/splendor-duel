@@ -70,7 +70,7 @@ func chooseWithStats(ctx context.Context, s *game.State, c Config, sess *Session
 			sess.trees = make([]*tree, c.Parallelism)
 			sess.seat = -1
 		}
-		fallback, stats = sess.searchMCTS(searchCtx, v, c.IncludeRefill, fallback)
+		fallback, stats = sess.searchMCTS(searchCtx, v, c.RefillTurn, fallback)
 	}
 	if ctx.Err() != nil {
 		return game.Move{}, nil, ctx.Err()

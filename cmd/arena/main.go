@@ -19,12 +19,14 @@ type result struct {
 	winner *int
 	draw   bool
 	turns  int
+	sims   [2]int
 	err    error
 }
 
 func play(ctx context.Context, index int, seed int64, agents [2]search.Config, reuse bool) result {
 	first := 0
 	s := game.New(seed, [2]string{"A", "B"}, &first)
+	r := result{index: index}
 	var sess [2]*search.Session
 	if reuse {
 		for i := range agents {
@@ -52,14 +54,18 @@ func play(ctx context.Context, index int, seed int64, agents [2]search.Config, r
 			}
 		}
 		var m game.Move
+		var stats *search.Stats
 		var err error
 		if sess[s.Current] != nil {
-			m, _, err = sess[s.Current].Choose(ctx, s, agents[s.Current])
+			m, stats, err = sess[s.Current].Choose(ctx, s, agents[s.Current])
 		} else {
-			m, err = search.Choose(ctx, s, agents[s.Current])
+			m, stats, err = search.ChooseWithStats(ctx, s, agents[s.Current])
 		}
 		if err != nil {
 			return result{index: index, err: err}
+		}
+		if stats != nil {
+			r.sims[s.Current] += stats.Simulations
 		}
 		s, err = game.Apply(s, m)
 		if err != nil {
@@ -71,7 +77,8 @@ func play(ctx context.Context, index int, seed int64, agents [2]search.Config, r
 			}
 		}
 	}
-	return result{index, s.Winner, s.Draw || s.Winner == nil, s.Turn, nil}
+	r.winner, r.draw, r.turns = s.Winner, s.Draw || s.Winner == nil, s.Turn
+	return r
 }
 func main() {
 	games := flag.Int("games", 10, "number of games")
@@ -122,11 +129,21 @@ func main() {
 	}()
 	go func() { wg.Wait(); close(results) }()
 	wins, losses, draws, failures := 0, 0, 0, 0
+	totals := [2]int64{} // simulations per seat
+	moves := [2]int64{}
 	for r := range results {
 		if r.err != nil {
 			failures++
 			fmt.Printf("game %d: %v\n", r.index+1, r.err)
 			continue
+		}
+		for seat := range totals {
+			agent := seat // agent a occupies seat index%2 (arena swaps seats on odd games)
+			if r.index%2 == 1 {
+				agent = 1 - seat
+			}
+			totals[agent] += int64(r.sims[seat])
+			moves[agent] += int64(r.turns+1) / 2
 		}
 		if r.draw {
 			draws++
@@ -135,16 +152,21 @@ func main() {
 		} else {
 			losses++
 		}
-		fmt.Printf("game %d: winner=%v draw=%t turns=%d\n", r.index+1, winnerText(r.winner), r.draw, r.turns)
+		// Agent a occupies seat index%2; report the winning agent, not the seat.
+		label := "none"
+		if !r.draw {
+			label = "b"
+			if *r.winner == r.index%2 {
+				label = "a"
+			}
+		}
+		fmt.Printf("game %d: winner=%s draw=%t turns=%d\n", r.index+1, label, r.draw, r.turns)
 	}
 	fmt.Printf("%s vs %s: %d wins, %d losses, %d draws, %d errors\n", *aSpec, *bSpec, wins, losses, draws, failures)
+	if moves[0] > 0 && moves[1] > 0 {
+		fmt.Printf("avg sims/move: %s=%.0f, %s=%.0f\n", *aSpec, float64(totals[0])/float64(moves[0]), *bSpec, float64(totals[1])/float64(moves[1]))
+	}
 	if failures > 0 {
 		os.Exit(1)
 	}
-}
-func winnerText(winner *int) any {
-	if winner == nil {
-		return "none"
-	}
-	return *winner
 }

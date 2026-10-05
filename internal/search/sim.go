@@ -18,6 +18,12 @@ const (
 
 	// Covers ordinary moves plus their replenishment-first alternatives.
 	simMaxMoves = 1024
+
+	// The engine allows voluntary replenishment whenever the board has an
+	// empty cell and the bag is not empty (主动补货; buys do not block it).
+	// The sim only opens those branches from this turn on to bound branching.
+	// ponytail: turn gate caps rollout cost; lower it if endgames mispredict.
+	DefaultRefillTurn = 30
 )
 
 type simCard struct {
@@ -47,7 +53,7 @@ type simState struct {
 	players                           [2]simPlayer
 	current, extraTurns, turn, winner int
 	draw                              bool
-	includeRefill                     bool
+	refillTurn                        int
 	rngState                          int32
 }
 type simMove struct {
@@ -66,7 +72,7 @@ func simColor(c game.Color) int {
 	return simEmpty
 }
 func importSim(s *game.State) *simState {
-	v := &simState{current: s.Current, extraTurns: s.ExtraTurns, turn: s.Turn, winner: -1, draw: s.Draw, rngState: s.RNGState, bagN: len(s.Bag), royalN: len(s.Royals), includeRefill: true}
+	v := &simState{current: s.Current, extraTurns: s.ExtraTurns, turn: s.Turn, winner: -1, draw: s.Draw, rngState: s.RNGState, bagN: len(s.Bag), royalN: len(s.Royals), refillTurn: DefaultRefillTurn}
 	if s.Winner != nil {
 		v.winner = *s.Winner
 	}
@@ -492,18 +498,30 @@ func (s *simState) replenish() {
 func (s *simState) ready(out []simMove) []simMove {
 	moves := s.moves(out)
 	canRefill := len(moves) == 0
-	if s.includeRefill && !canRefill {
-		tokens := 0
-		for _, g := range s.board {
-			if g != simEmpty && g != simGold {
-				tokens++
+	if !canRefill {
+		if s.turn >= s.refillTurn {
+			// Voluntary refill needs a free cell to place into (simEmpty marks
+			// an empty CELL, not an empty board): a completely full board cannot
+			// replenish, and trying would only hand the opponent a privilege.
+			for _, g := range s.board {
+				if g == simEmpty {
+					canRefill = true
+					break
+				}
 			}
-		}
-		canRefill = tokens <= 3
-		for _, m := range moves {
-			if m.action&3 == 2 {
-				canRefill = false
-				break
+		} else {
+			tokens := 0
+			for _, g := range s.board {
+				if g != simEmpty && g != simGold {
+					tokens++
+				}
+			}
+			canRefill = tokens <= 3
+			for _, m := range moves {
+				if m.action&3 == 2 {
+					canRefill = false
+					break
+				}
 			}
 		}
 	}
