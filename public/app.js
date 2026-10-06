@@ -298,13 +298,16 @@ function pickDeck(level) {
 }
 
 // ---------------- 设置面板 ----------------
-document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
-  document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x === t));
-  $('#setup-human').classList.toggle('hidden', t.dataset.mode !== 'human');
-  $('#setup-agents').classList.toggle('hidden', t.dataset.mode !== 'agents');
-  $('#setup-resume').classList.toggle('hidden', t.dataset.mode !== 'resume');
-  if (t.dataset.mode === 'resume') loadSessions();
-}));
+/** 主页 <-> 人机/续局 子视图切换 */
+function showSetup(view) {
+  $('#setup-home').classList.toggle('hidden', view !== 'home');
+  $('#setup-human').classList.toggle('hidden', view !== 'human');
+  $('#setup-resume').classList.toggle('hidden', view !== 'resume');
+  if (view === 'resume') loadSessions();
+}
+$('#home-human').addEventListener('click', () => showSetup('human'));
+$('#home-resume').addEventListener('click', () => showSetup('resume'));
+document.querySelectorAll('.btn-back').forEach((b) => b.addEventListener('click', () => showSetup('home')));
 
 async function loadSessions() {
   const box = $('#r-list');
@@ -369,17 +372,11 @@ if (hashFile) {
   api('/api/resume', { file: hashFile }).then(startGame).catch(() => { /* 文件不存在则留在设置页 */ });
 }
 
-/** 搜索型 bot 的 spec: 拼上界面里配置的每步超时秒数 (默认 20s) */
-function searchSpec(sel, msInput) {
-  const v = $(sel).value;
-  if (v !== 'ab' && v !== 'par-ab' && v !== 'mcts' && v !== 'par-mcts2') return v;
-  const ms = Math.max(1, Number($(msInput).value) || 20) * 1000;
-  return `${v}@${ms}`;
-}
-
-$('#btn-start').addEventListener('click', async () => {
-  const spec = searchSpec('#h-bot', '#h-search-ms');
-  const seat = Number($('#h-seat').value);
+let lastSpec = null; // 上局对手配置, 供 #btn-new 重开时复用
+async function startHumanGame(spec) {
+  // 对手固定并行 MCTS; 难度 = 每步搜索超时秒数; 先后手随机
+  lastSpec = spec;
+  const seat = Math.random() < 0.5 ? 0 : 1;
   const payload = await api('/api/new', {
     mode: 'human',
     p1: seat === 0 ? null : spec,
@@ -387,15 +384,15 @@ $('#btn-start').addEventListener('click', async () => {
     humanSeat: seat,
   });
   startGame(payload);
-});
+}
 
-$('#btn-start-agents').addEventListener('click', async () => {
-  const spec = (sel) => searchSpec(sel, '#a-search-ms');
-  const payload = await api('/api/new', { mode: 'agents', p1: spec('#a-p1'), p2: spec('#a-p2') });
-  startGame(payload);
+// 点击难度直接开局 (不再有开始/返回按钮)
+document.querySelectorAll('#setup-human .home-card').forEach((b) =>
+  b.addEventListener('click', () => startHumanGame(`par-mcts2@${b.dataset.ms}`)));
+$('#btn-new').addEventListener('click', () => {
+  // 用当前游戏的难度重开一局 (续局进来时从快照恢复超时, 兜底困难 20s)
+  if (G?.mode === 'human') startHumanGame(lastSpec || `par-mcts2@${G.botTimeoutMs?.[1 - (G.humanSeat ?? 0)] || 20000}`);
 });
-
-$('#btn-new').addEventListener('click', () => { location.hash = ''; location.reload(); });
 $('#logo').addEventListener('click', () => { location.hash = ''; location.reload(); }); // 回主页(丢掉 hash, 不自动续局)
 
 /** 等对局首屏图片加载/失败完成(带超时兜底); 首屏渲染完成后再调 /api/bot */
@@ -414,19 +411,24 @@ function boardImagesSettled(timeoutMs = 2000) {
 
 function startGame(payload) {
   G = payload;
+  botThinking = null; // 旧局的思考状态作废, 避免新局复用旧请求
   if (payload.file) location.hash = payload.file; // 刷新可自动续局
   ui = freshUi();
   $('#setup').classList.add('hidden');
   $('#game').classList.remove('hidden');
+  $('#btn-new').classList.toggle('hidden', payload.mode !== 'human');
   $('#agent-controls').classList.toggle('hidden', G.mode !== 'agents');
   $('#human-controls').classList.toggle('hidden', G.mode !== 'human');
   render();
   if (payload.pending) {
+    const id = payload.id;
     boardImagesSettled().then(() => {
-      requestBot(`/api/bot/${G.id}`).then((r) => {
+      requestBot(`/api/bot/${id}`).then((r) => {
+        if (G?.id !== id) return; // 期间重开了新局, 丢弃旧局响应
         Object.assign(G, r);
         revealBotMove();
       }).catch((err) => {
+        if (G?.id !== id) return;
         $('#move-error').textContent = err.message;
         render();
       });
@@ -438,7 +440,7 @@ function startGame(payload) {
 function requestBot(path) {
   if (botThinking) return botThinking.promise;
   const seat = G.view.current;
-  const timeoutMs = G.botTimeoutMs?.[seat] ?? Number($(G.mode === 'human' ? '#h-search-ms' : '#a-search-ms').value) * 1000;
+  const timeoutMs = G.botTimeoutMs?.[seat] ?? 20000;
   const thinking = { seat, startedAt: performance.now(), timeoutMs: Math.max(1, timeoutMs), timer: null, promise: null };
   botThinking = thinking;
   thinking.promise = api(path, {}).finally(() => {

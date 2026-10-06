@@ -192,11 +192,15 @@ input[type="number"] { background: var(--panel); border: 1px solid var(--line2);
 /* 设置 */
 header h1 { cursor: pointer; user-select: none; transition: opacity .12s; }
 header h1:hover { opacity: .75; }
-.tabs { display: flex; gap: 8px; margin-bottom: 14px; }
-.tab { flex: 0 0 auto; }
-.tab.active { background: var(--ink); color: #fff; border-color: var(--ink); font-weight: 600; }
 .setup-body { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
 .setup-body label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--dim); }
+/* 设置页: 面板占满剩余空间, 主页按钮垂直居中 */
+body:has(#setup:not(.hidden)) { min-height: 100dvh; display: flex; flex-direction: column; }
+#setup { flex: 1; display: flex; flex-direction: column; }
+.setup-home { display: flex; flex-direction: column; gap: 12px; max-width: 600px; margin: 0 auto; flex: 1; justify-content: center; }
+.home-card { display: flex; flex-direction: column; gap: 4px; padding: 18px 20px; font-size: 17px; font-weight: 600; text-align: left; }
+.home-card small { font-weight: 400; font-size: 12.5px; color: var(--dim); }
+.home-card:hover { border-color: var(--faint); }
 select, input[type="text"] { background: var(--panel); border: 1px solid var(--line2); color: var(--ink); border-radius: 9px; padding: 8px; min-width: 220px; }
 
 /* ---------- 布局 ---------- */

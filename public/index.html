@@ -3,77 +3,36 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>璀璨宝石对决 Arena</title>
-<link rel="stylesheet" href="/style.css?v=privilege-icons-2">
+<title>Splendor Duel</title>
+<link rel="stylesheet" href="/style.css?v=home-5">
 <!-- 主题皮肤与共享棋盘装饰 -->
-<link rel="stylesheet" href="/prototype-variants.css?v=privilege-icons-2">
+<link rel="stylesheet" href="/prototype-variants.css?v=home-5">
 </head>
 <body>
 <header>
-  <h1 id="logo" title="回到主页">💎 璀璨宝石对决 <span class="en">Arena</span></h1>
-  <button id="btn-new" class="ghost">新对局</button>
+  <h1 id="logo" title="回到主页">Splendor Duel</h1>
+  <button id="btn-new" class="ghost hidden">新对局</button>
 </header>
 
 <!-- 设置面板 -->
 <section id="setup" class="panel">
-  <div class="tabs">
-    <button class="tab active" data-mode="human">👤 人机对战</button>
-    <button class="tab" data-mode="agents">🤖 Agent 对战</button>
-    <button class="tab" data-mode="resume">📁 继续对局</button>
+  <div id="setup-home" class="setup-home">
+    <button id="home-human" class="home-card">👤 人机对战<small>选难度, 挑战 bot (先后手随机)</small></button>
+    <button id="home-resume" class="home-card">📁 继续对局<small>从上次的位置接着下</small></button>
   </div>
 
-  <div id="setup-human" class="setup-body">
-    <label>对手 Agent:
-      <select id="h-bot">
-        <option value="greedy">贪心bot</option>
-        <option value="ab">αβbot(搜索)</option>
-        <option value="par-ab">αβbot(并行)</option>
-        <option value="mcts">MCTSbot(蒙特卡洛)</option>
-        <option value="par-mcts2" selected>MCTSbot(并行)</option>
-      </select>
-    </label>
-    <label>执子:
-      <select id="h-seat">
-        <option value="1">我后手 (先得1特权)</option>
-        <option value="0">我先手</option>
-      </select>
-    </label>
-    <label class="search-only">搜索超时 秒 (αβbot/MCTS):
-      <input id="h-search-ms" type="number" min="1" max="120" step="1" value="20">
-    </label>
-    <button id="btn-start" class="primary">开始对局</button>
-  </div>
-
-  <div id="setup-agents" class="setup-body hidden">
-    <label>先手 Agent:
-      <select id="a-p1">
-        <option value="greedy">贪心bot</option>
-        <option value="ab">αβbot(搜索)</option>
-        <option value="par-ab">αβbot(并行)</option>
-        <option value="mcts">MCTSbot(蒙特卡洛)</option>
-        <option value="par-mcts2" selected>MCTSbot(并行)</option>
-      </select>
-    </label>
-    <label>后手 Agent:
-      <select id="a-p2">
-        <option value="greedy">贪心bot</option>
-        <option value="ab">αβbot(搜索)</option>
-        <option value="par-ab">αβbot(并行)</option>
-        <option value="mcts">MCTSbot(蒙特卡洛)</option>
-        <option value="par-mcts2" selected>MCTSbot(并行)</option>
-      </select>
-    </label>
-    <label class="search-only">搜索超时 秒 (αβbot/MCTS):
-      <input id="a-search-ms" type="number" min="1" max="120" step="1" value="20">
-    </label>
-    <button id="btn-start-agents" class="primary">开始对局</button>
+  <div id="setup-human" class="setup-home hidden">
+    <button class="home-card" data-ms="1000">🌱 简单<small>bot 每步思考 1 秒</small></button>
+    <button class="home-card" data-ms="10000">⚔️ 中等<small>bot 每步思考 10 秒</small></button>
+    <button class="home-card" data-ms="20000">🔥 困难<small>bot 每步思考 20 秒</small></button>
+    <button class="home-card" data-ms="30000">💀 地狱<small>bot 每步思考 30 秒</small></button>
   </div>
 
   <div id="setup-resume" class="setup-body hidden">
     <p class="hint">点击任意会话从当前位置继续(按原配置重建); 新对局的 URL 会带 #会话文件, 刷新页面自动续局。</p>
     <div id="r-list" class="session-list"><div class="session-empty">加载中...</div></div>
+    <button class="btn-back ghost">← 返回</button>
   </div>
-  <p class="hint">规则: 5×5 棋盘拿 token → 买卡攒折扣/分数/皇冠; 胜利条件: 20分 或 10皇冠 或 同色10分。</p>
 </section>
 
 <!-- 对局界面 -->
@@ -119,6 +78,6 @@
   <div id="modal-box" class="modal"></div>
 </div>
 
-<script type="module" src="/app.js?v=privilege-icons-2"></script>
+<script type="module" src="/app.js?v=home-5"></script>
 </body>
 </html>

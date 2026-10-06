@@ -28,12 +28,8 @@ header { background: #fff; border-bottom-color: #e4e4e7; }
 h1 { font-weight: 650; letter-spacing: -.01em; }
 h1 .en { color: #71717a; font-weight: 500; }
 h2 { letter-spacing: .08em; font-size: 11px; }
-/* 分段式 tab */
-.tabs {
-  background: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 10px; padding: 3px; gap: 2px;
-}
-.tab { border: none; background: transparent; box-shadow: none; border-radius: 7px; color: #71717a; }
-.tab.active { background: #fff; color: #18181b; box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+/* 主页大卡片按钮 */
+.home-card { border-radius: 12px; }
 /* 棋盘: 白格细线, gem 扁平化 */
 .board { gap: 6px; }
 .coord { color: #d4d4d8; }

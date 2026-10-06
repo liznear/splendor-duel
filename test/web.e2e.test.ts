@@ -18,7 +18,7 @@ describe('静态资源', () => {
     const r = await fetch(BASE + '/');
     const html = await r.text();
     expect(r.status).toBe(200);
-    expect(html).toContain('璀璨宝石对决');
+    expect(html).toContain('Splendor Duel');
     expect(html).toContain('/app.js');
   });
   test('页面强制加载新版特权图片资源', async () => {
