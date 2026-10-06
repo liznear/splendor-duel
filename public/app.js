@@ -31,16 +31,79 @@ const cellName = (i) => `${'ABCDE'[i % 5]}${Math.floor(i / 5) + 1}`;
 // ---------------- 宝石 / 卡片组件 ----------------
 function gemEl(color) { return el('span', `gem ${TCSS[color]}`); }
 
+function privilegeIcons(count) {
+  const icons = el('span', `privilege-tokens${count === 0 ? ' empty' : ''}`);
+  icons.setAttribute('aria-label', `特权 ${count} 枚`);
+  icons.title = `特权 ${count} 枚`;
+  for (let i = 0; i < Math.max(1, count); i++) {
+    const image = el('img', 'privilege-img');
+    image.src = '/assets/privilege.png';
+    image.alt = '';
+    icons.append(image);
+  }
+  return icons;
+}
+
+function tokenChip(color, count, title, depleted = false) {
+  const tok = el('span', `pool-token ${TCSS[color]}${depleted ? ' depleted' : ''}`);
+  const image = el('img');
+  image.src = `/assets/token-${color}.png`;
+  image.alt = '';
+  tok.append(image, span('n', String(count)));
+  tok.title = title;
+  tok.setAttribute('aria-label', title);
+  return tok;
+}
+
 function cardTitle(def, chosenColor) {
   const color = chosenColor ?? def.color;
   const parts = [];
   if (def.points) parts.push(`${def.points}分`);
   if (def.crowns) parts.push(`♛${def.crowns}`);
-  parts.push(def.isAssociate ? (color ? `百搭→${GEMZH[color]}` : '百搭卡') : color ? `${GEMZH[color]}卡` : '分卡');
+  if (def.isAssociate) {
+    if (color) parts.push(`百搭→${GEMZH[color]}`);
+    else parts.push('百搭卡');
+  } else if (color) {
+    parts.push(`${GEMZH[color]}卡`);
+  } else {
+    parts.push('分卡');
+  }
   if (def.ability) parts.push(ABZH[def.ability]);
   if (def.cost) parts.push(`费用 ${COST_ORDER.filter((k) => def.cost[k] > 0).map((k) => `${GEMZH[k] ?? TZH[k]}×${def.cost[k]}`).join(' ')}`);
   return parts.join(' · ');
 }
+
+/** 折扣后各色实际费用; 珠宝色无折扣。 */
+function effCost(p, def) {
+  const eff = {};
+  for (const g of COST_ORDER) {
+    const n = Math.max(0, (def.cost?.[g] ?? 0) - (g === 'pearl' ? 0 : p.bonuses?.[g] ?? 0));
+    if (n > 0) eff[g] = n;
+  }
+  return eff;
+}
+
+/** 买卡支付/缺口: 买得起列支付清单 (含黄金), 买不起列缺口清单。 */
+function paymentPlan(p, def) {
+  if (!def?.cost) return null;
+  const eff = effCost(p, def);
+  const pay = [];
+  const lack = [];
+  let goldNeed = 0;
+  for (const g of COST_ORDER) {
+    const use = Math.min(eff[g] ?? 0, p.tokens[g] ?? 0);
+    if (use > 0) pay.push([g, use]);
+    const miss = (eff[g] ?? 0) - use;
+    if (miss > 0) { lack.push([g, miss]); goldNeed += miss; }
+  }
+  if (goldNeed > (p.tokens.gold ?? 0)) return { ok: false, list: lack };
+  if (goldNeed > 0) pay.push(['gold', goldNeed]);
+  return { ok: true, list: pay };
+}
+const planVerb = (plan) => (plan.ok ? '支付' : '还差');
+const planTitle = (plan) => plan.list.length === 0
+  ? '折扣已覆盖, 无需支付'
+  : `${planVerb(plan)}: ${plan.list.map(([g, n]) => `${GEMZH[g] ?? TZH[g]}×${n}`).join(' ')}`;
 
 /** 图片实体卡: /cards/{id}.png, 槽号 + 悬停/选中环 */
 function cardEl(c, opts = {}) {
@@ -397,7 +460,7 @@ function renderBotProgress() {
   if (!row) return;
   const fraction = Math.min(1, Math.max(0, (performance.now() - botThinking.startedAt) / botThinking.timeoutMs));
   row.querySelector('progress').value = fraction;
-  row.querySelector('span').textContent = fraction === 1 ? '等待结果…' : `思考中 ${Math.floor(fraction * 100)}%`;
+  row.querySelector('span').textContent = fraction === 1 ? '等待结果…' : '思考中';
 }
 
 function render() {
@@ -626,9 +689,17 @@ function renderCardDialog(box) {
   const row = el('div', 'cd-actions');
   if (ui.pick.t !== 'deck') {
     const buyMatch = matchAction({ kind: 'buy', from });
+    const plan = paymentPlan(me, def);
+    if (plan) {
+      const costLine = el('div', 'cd-cost');
+      costLine.append(span('lab', plan.ok ? '支付:' : '还差:'));
+      if (plan.list.length === 0) costLine.append(span('hint', '折扣已覆盖, 无需支付'));
+      for (const [g, n] of plan.list) costLine.append(tokenChip(g, n, `${GEMZH[g] ?? TZH[g]}×${n}`));
+      side.append(costLine);
+    }
     const buy = el('button', 'primary big', '买卡');
     buy.disabled = !buyMatch;
-    buy.title = buyMatch ? '' : 'token/折扣不足 · 可先用特权拿 token 再来';
+    buy.title = plan ? planTitle(plan) : '';
     buy.addEventListener('click', () => {
       ui.action = buyMatch;
       const cc = actionCard();
@@ -703,6 +774,7 @@ function renderBoard() {
   G.view.board.forEach((t, i) => {
     if (i % 5 === 0) b.append(el('div', 'coord', String(Math.floor(i / 5) + 1)));
     const d = el('div', `cell${t == null ? ' empty' : ''}`);
+    if (i === 12) d.classList.add('start'); // 螺旋起点 (game.Spiral[0] = 中心格)
     if (t == null) {
       d.textContent = '·';
     } else {
@@ -716,6 +788,14 @@ function renderBoard() {
     if (ui.privileges.includes(i) || ui.takeSamePick === i || ui.pick?.goldCell === i || (ui.pick?.t === 'take' && ui.pick.cells.includes(i))) d.classList.add('picked');
     b.append(d);
   });
+  // 主动补货固定在棋盘右上角; 不可补货时置灰禁用。
+  const refill = el('button', 'opt-chip board-refill');
+  refill.append(span('', '🔄'));
+  const canRefill = myTurn() && canReplenishNow();
+  refill.disabled = !canRefill;
+  refill.title = canRefill ? '主动补货 · 随机回填空格，对手得 1 特权' : '当前不可主动补货';
+  if (canRefill) refill.addEventListener('click', () => { ui.phase = 'replenish'; render(); });
+  b.append(refill);
 }
 
 function renderPyramid() {
@@ -754,33 +834,32 @@ function renderPyramid() {
     pyr.append(r);
   }
 
+  renderPools();
+}
+
+function renderPools() {
   const pool = $('#pool-royal');
   pool.replaceChildren();
   if (G.view.royals.length === 0) pool.append(el('span', 'royal none', '无'));
   G.view.royals.forEach((r, i) => {
     pool.append(royalBtn(r, ui.extras.royalPick === i, () => { ui.extras.royalPick = i; }));
   });
-  $('#pool-priv').textContent = String(3 - G.view.players[0].privileges - G.view.players[1].privileges);
+  const privileges = 3 - G.view.players[0].privileges - G.view.players[1].privileges;
+  const privilegePool = $('#pool-priv');
+  privilegePool.replaceChildren(privilegeIcons(privileges));
+  privilegePool.setAttribute('aria-label', `特权池剩余 ${privileges} 枚`);
+  privilegePool.title = `特权池剩余 ${privileges} 枚`;
   const bag = $('#pool-bag');
-  bag.replaceChildren(el('span', '', '袋中:'));
+  bag.replaceChildren();
+  bag.setAttribute('aria-label', '袋中宝石');
   const cnt = {};
   for (const t of G.view.bag) cnt[t] = (cnt[t] ?? 0) + 1;
-  const colors = ALL_COLORS.filter((c) => cnt[c]);
-  if (colors.length === 0) bag.append(el('span', 'hint', '空'));
-  for (const c of colors) {
-    const tok = el('span', 'tok');
-    tok.append(gemEl(c), span('n', String(cnt[c])));
-    tok.title = `补货时可回填 ${TZH[c]}`;
-    bag.append(tok);
+  const gemBox = el('span', 'res-box gem-box');
+  for (const c of ALL_COLORS) {
+    const count = cnt[c] ?? 0;
+    gemBox.append(tokenChip(c, count, `袋中${TZH[c]}宝石 ${count} 枚`, count === 0));
   }
-  // 主动补货按钮就在袋况旁
-  if (myTurn() && canReplenishNow()) {
-    const b = el('button', 'opt-chip');
-    b.append(span('', '🔄 主动补货'));
-    b.title = '随机回填空格 · 对手得 1 特权';
-    b.addEventListener('click', () => { ui.phase = 'replenish'; render(); });
-    bag.append(b);
-  }
+  bag.append(gemBox, privilegePool);
 }
 
 function renderPlayers() {
@@ -795,67 +874,66 @@ function renderPlayers() {
     if (G.view.current === s && !G.over) card.classList.add('active');
 
     const head = el('div', 'p-head');
-    head.append(span('name', `${p.name}`));
+    const bot = /bot/i.test(p.name);
+    let label = p.name;
+    if (bot) label = '🤖';
+    const name = span('name', label);
+    if (G.view.current === s && !G.over) name.append(' 👈');
+    if (bot) { name.title = p.name; name.setAttribute('aria-label', p.name); }
+    head.append(name);
+    // 估计胜率紧跟 bot emoji; hover 显示模拟次数。
+    if (bot && G.botSearch?.[s]?.winRate != null) {
+      const metrics = G.botSearch[s];
+      const wr = span('winrate', `胜率 ${(metrics.winRate * 100).toFixed(1)}%`);
+      wr.title = `第 ${metrics.turn} 回合的搜索；胜率为本方所选走法的模拟估计 · 模拟 ${metrics.simulations.toLocaleString()} 次，单步 ${metrics.moveSimulations} 次`;
+      head.append(wr);
+    }
     const stats = el('div', 'p-stats');
-    stats.append(el('span', '', '积分'), span('pts', String(p.points)));
-    stats.append(el('span', '', '皇冠'), span('cr', `♛${p.crowns}`));
-    // 数量本身就是使用特权的入口。
-    if (mine && myTurn() && p.privileges > 0 && G.legal.privilegeCells.length > 0) {
-      const b = el('button', 'opt-chip');
-      b.append(span('', `💎 特权×${p.privileges}`));
-      b.title = '使用特权 · 每枚特权可从棋盘拿 1 个非金 token';
-      b.setAttribute('aria-label', `使用特权，剩余 ${p.privileges} 枚`);
-      b.addEventListener('click', () => { ui.privileges = []; ui.phase = 'priv'; render(); });
-      stats.append(b);
-    } else stats.append(el('span', '', `特权×${p.privileges}`));
+    stats.append(span('pts', `${p.points} 分`), span('sep', '·'), span('cr', `${p.crowns} 👑`));
     head.append(stats);
     card.append(head);
 
-    const search = el('div', 'bot-search');
-    if (botThinking?.seat === s) {
+    if (bot) {
+      // 进度条常驻: 思考时显示耗时, 空闲时归零。
+      const search = el('div', 'bot-search');
       const progress = el('div', 'bot-progress');
       const bar = el('progress');
       bar.max = 1;
       bar.value = 0;
       bar.setAttribute('aria-label', 'Bot 思考耗时进度');
-      progress.append(span('', '思考中 0%'), bar);
+      const idle = botThinking?.seat !== s;
+      progress.append(span('', idle ? '空闲' : '思考中'), bar);
       search.append(progress);
-      search.title = '根据本次请求的耗时与搜索 timeout 计算';
-    } else if (!mine) {
-      const metrics = G.botSearch?.[s];
-      const rate = metrics?.winRate == null ? '—' : `${(metrics.winRate * 100).toFixed(1)}%`;
-      search.append(span('', metrics ? `上次搜索 · 模拟 ${metrics.simulations.toLocaleString()} · 估计胜率 ${rate}` : '模拟 — · 估计胜率 —'));
-      search.title = metrics ? `第 ${metrics.turn} 回合的搜索；胜率为本方所选走法的模拟估计，基于 ${metrics.moveSimulations} 次模拟` : '完成 MCTS 搜索后显示模拟次数和本方估计胜率';
+      search.title = botThinking?.seat === s ? '根据本次请求的耗时与搜索 timeout 计算' : '等待 bot 行动';
+      card.append(search);
     }
-    card.append(search);
 
     const tokens = el('div', 'tokens');
-    const colors = ALL_COLORS.filter((c) => p.tokens[c] > 0);
-    if (colors.length === 0) tokens.append(el('span', 'hint', '无 token'));
-    for (const c of colors) {
-      const tok = el('span', 'tok');
-      tok.append(gemEl(c), span('n', String(p.tokens[c])));
-      tok.title = TZH[c];
-      tokens.append(tok);
+    tokens.setAttribute('aria-label', '持有宝石');
+    const gems = el('span', 'res-box gem-box');
+    for (const c of [...PEARL_COLORS, 'gold']) gems.append(tokenChip(c, p.tokens[c] ?? 0, `${p.name}的${TZH[c]}宝石`));
+    tokens.append(gems);
+    if (p.privileges > 0) {
+      const usable = mine && myTurn() && G.legal.privilegeCells.length > 0;
+      let tag = 'span';
+      if (usable) tag = 'button';
+      const privs = el(tag, 'res-box priv-box');
+      privs.append(privilegeIcons(p.privileges));
+      // 数量本身就是使用特权的入口。
+      if (usable) {
+        privs.title = '使用特权 · 每枚特权可从棋盘拿 1 个非金 token';
+        privs.setAttribute('aria-label', `使用特权，剩余 ${p.privileges} 枚`);
+        privs.addEventListener('click', () => { ui.privileges = []; ui.phase = 'priv'; render(); });
+      }
+      tokens.append(privs);
     }
     card.append(tokens);
 
-    const royals = el('div', 'cards-line');
-    royals.append(el('span', 'lab', '皇家卡:'));
-    if (p.royals.length) {
-      const pts = p.royals.reduce((s, r) => s + r.points, 0);
-      const chip = el('span', 'tok cchip');
-      chip.append(span('n', `×${p.royals.length} · ${pts}分`));
-      chip.title = p.royals.map((r) => `皇家卡 ${r.points}分${r.ability ? ` · ${ABZH[r.ability]}` : ''}`).join('；');
-      royals.append(chip);
-    } else royals.append(el('span', 'hint', '无'));
-    card.append(royals);
-
-    // 每色已购卡: 折扣 + 累计分 (同色 10 分即胜)
-    const cardsLine = el('div', 'cards-line');
-    cardsLine.append(el('span', 'lab', '宝石卡:'));
-    if (p.cards.length === 0) cardsLine.append(el('span', 'hint', '无'));
-    else {
+    // 每色已购卡: 折扣 + 累计分 (同色 10 分即胜); 皇家卡放在其下。
+    const cardsCard = el('div', 'panel-card owned');
+    cardsCard.append(el('span', 'lab', '已购买的宝石:'));
+    const chips = el('div', 'cards-line');
+    if (p.cards.length > 0) {
       const byColor = {};
       let nonePts = 0;
       for (const c of p.cards) {
@@ -867,21 +945,23 @@ function renderPlayers() {
         const e = byColor[g];
         if (!e) continue;
         const chip = el('span', 'tok cchip');
-        chip.append(gemEl(g));
-        chip.append(span('n', `${p.bonuses[g] ?? 0} - ${e.pts}`));
+        const badge = el('span', `pool-token ${TCSS[g]}`);
+        badge.append(gemEl(g), span('n', String(p.bonuses[g] ?? 0)));
+        chip.append(badge, span('n', `${e.pts} 分`));
         chip.title = `${GEMZH[g]}卡 ×${e.n} · 折扣${p.bonuses[g] ?? 0} · 累计${e.pts}分 (同色10分获胜)`;
-        cardsLine.append(chip);
+        chips.append(chip);
       }
       if (nonePts > 0) {
         const chip = el('span', 'tok cchip');
         chip.append(span('n', `分卡·${nonePts}分`));
         chip.title = `无色分卡 · 累计${nonePts}分`;
-        cardsLine.append(chip);
+        chips.append(chip);
       }
     }
-    card.append(cardsLine);
+    cardsCard.append(chips);
+    card.append(cardsCard);
 
-    const reserved = el('div', 'cards-line');
+    const reserved = el('div', 'panel-card reserved');
     reserved.append(el('span', 'lab', '预留:'));
     if (p.reserved.length === 0) reserved.append(el('span', 'hint', '无'));
     else if (mine || G.mode === 'agents') {
@@ -904,6 +984,7 @@ function renderPlayers() {
       reserved.append(minis);
     }
     card.append(reserved);
+    if (box.children.length) box.append(el('div', 'player-sep'));
     box.append(card);
   }
   renderBotProgress();
@@ -972,22 +1053,30 @@ function renderActionbar() {
   const notice = $('#notice');
   notice.classList.toggle('hidden', !G.notice);
   notice.textContent = G.notice ?? '';
-  $('#human-turn').classList.toggle('hidden', !turn);
+  $('#human-turn').classList.toggle('hidden', G.mode !== 'human');
   if (G.mode === 'agents') {
     $('#turn-indicator').textContent = G.over ? '对局结束' : `第 ${G.view.turnCount + 1} 回合 · 轮到 ${G.names[G.view.current]}`;
   }
-  if (!turn) return;
+  if (G.mode !== 'human') return;
 
   const pick = $('#pick-bar');
   pick.replaceChildren();
-  pick.classList.toggle('hidden', !(ui.pick || ui.action || ui.hint));
 
-  // 当前选择进度
+  if (!turn) {
+    pick.append(el('span', 'hint', '等待对手行动…'));
+    return;
+  }
+
+  // 当前选择进度: 按颜色聚合, 数字写在 token 中间 (不显示坐标)
   if (ui.pick?.t === 'take') {
+    const counts = {};
     for (const i of ui.pick.cells) {
-      const tok = el('span', 'tok');
-      tok.append(gemEl(G.view.board[i]), span('n', cellName(i)));
-      pick.append(tok);
+      const c = G.view.board[i];
+      if (c) counts[c] = (counts[c] ?? 0) + 1;
+    }
+    for (const c of ALL_COLORS) {
+      if (!counts[c]) continue;
+      pick.append(tokenChip(c, counts[c], `已选 ${TZH[c]}宝石 ×${counts[c]}`));
     }
     if (!ui.action) {
       pick.append(el('span', 'error-inline', '组合不可行'));
@@ -1003,6 +1092,7 @@ function renderActionbar() {
   } else if (ui.action) {
     pick.append(el('span', 'ok-inline', '✓ 提交中…'));
   }
+  if (!ui.pick && !ui.action && !ui.hint) pick.append(el('span', 'hint', '点击棋盘上的宝石进行选择'));
   if (ui.hint) { pick.append(el('span', 'error-inline', ui.hint)); ui.hint = ''; }
 
   const clear = el('button', 'ghost', '清除');
@@ -1105,7 +1195,10 @@ function renderExtrasModal(box) {
 function refreshExtrasConfirm(excess) {
   const dsum = Object.values(ui.extras.discard ?? {}).reduce((s, n) => s + n, 0);
   const hint = document.querySelector('.discard-hint');
-  if (hint) hint.textContent = dsum === excess ? '' : dsum < excess ? `还需弃 ${excess - dsum} 枚` : '弃多了';
+  let discardHint = '';
+  if (dsum < excess) discardHint = `还需弃 ${excess - dsum} 枚`;
+  else if (dsum > excess) discardHint = '弃多了';
+  if (hint) hint.textContent = discardHint;
   const pending = extrasPending();
   const ok = [...document.querySelectorAll('.modal-actions button.primary')].find((b) => b.textContent.includes('确认提交') || b.textContent.includes('还差'));
   if (ok) {
@@ -1150,15 +1243,24 @@ function gemsRow(gems) {
   return row;
 }
 
-function tokenCountsRow(counts, signed = false) {
+function tokenCountsRow(counts) {
   const row = el('span', 'bm-gems bm-counts');
   for (const color of ALL_COLORS) {
     const n = counts?.[color] ?? 0;
     if (!n) continue;
-    const count = signed ? `${n > 0 ? '+' : '−'}${Math.abs(n)}` : `×${n}`;
-    const chip = span(signed ? `bm-count bm-delta ${n > 0 ? 'up' : 'down'}` : 'bm-count tok');
-    chip.append(gemEl(color), span('', `${TZH[color]} ${count}`));
-    row.append(chip);
+    row.append(tokenChip(color, `×${n}`, `${TZH[color]} ×${n}`));
+  }
+  return row;
+}
+
+function tokenDeltaRow(counts) {
+  const row = el('span', 'bm-gems bm-counts');
+  for (const color of ALL_COLORS) {
+    const n = counts?.[color] ?? 0;
+    if (!n) continue;
+    let count = `−${Math.abs(n)}`;
+    if (n > 0) count = `+${n}`;
+    row.append(tokenChip(color, count, `${TZH[color]} ${count}`));
   }
   return row;
 }
@@ -1191,11 +1293,9 @@ function botMoveRow(v) {
   } else if (a.kind === 'buy' && v.card) {
     main = step('购买卡牌', miniCard(v.card, v.associateGem, true));
     if (v.payment) {
-      const payment = el('div', 'bm-payment');
       const counts = tokenCountsRow(v.payment);
-      payment.append(span('bm-extra', counts.childElementCount ? '支付' : '无需支付宝石'));
-      if (counts.childElementCount) payment.append(counts);
-      main.append(payment);
+      if (counts.childElementCount) main.append(span('bm-extra', '支付'), counts);
+      else main.append(span('bm-extra', '无需支付宝石'));
     }
   }
   if (v.refill && main) {
@@ -1213,11 +1313,18 @@ function botMoveRow(v) {
     const descriptions = {
       turn: '接下来继续行动一回合',
       privilege: '触发获得 1 枚特权的效果（上限 3 枚）',
-      steal: combinedSteal ? '尝试从你手中偷取 1 枚非黄金宝石（合计结果见下方）' : v.stealGem ? '从你手中偷取 1 枚宝石' : '你没有可偷取的非黄金宝石',
-      takeSame: v.takeSameGem ? '从棋盘额外拿取 1 枚同色宝石' : '棋盘没有可拿取的同色宝石',
     };
+    if (kind === 'steal') {
+      if (combinedSteal) descriptions.steal = '尝试从你手中偷取 1 枚非黄金宝石（合计结果见下方）';
+      else if (v.stealGem) descriptions.steal = '从你手中偷取 1 枚宝石';
+      else descriptions.steal = '你没有可偷取的非黄金宝石';
+    } else if (kind === 'takeSame') {
+      descriptions.takeSame = v.takeSameGem ? '从棋盘额外拿取 1 枚同色宝石' : '棋盘没有可拿取的同色宝石';
+    }
     const body = step(`${source} · ${labels[kind] ?? ABZH[kind] ?? kind}`, span('bm-extra', descriptions[kind] ?? ''));
-    const gem = kind === 'steal' && !combinedSteal ? v.stealGem : kind === 'takeSame' ? v.takeSameGem : null;
+    let gem = null;
+    if (kind === 'steal' && !combinedSteal) gem = v.stealGem;
+    else if (kind === 'takeSame') gem = v.takeSameGem;
     if (gem) body.append(gemsRow([gem]));
   };
   if (a.kind === 'buy') ability('卡牌能力', v.card?.ability);
@@ -1232,7 +1339,7 @@ function botMoveRow(v) {
   if (v.deltas) {
     const summary = el('div', 'bm-summary');
     summary.append(span('bm-extra', '本次变化'), deltasRow(v.deltas));
-    const changes = tokenCountsRow(v.tokenChanges, true);
+    const changes = tokenDeltaRow(v.tokenChanges);
     if (changes.childElementCount) {
       const tokens = el('div', 'bm-token-changes');
       tokens.append(span('bm-extra', '宝石净变化'), changes);

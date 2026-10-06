@@ -12,8 +12,8 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
   const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   const reservedCardImage = readFileSync(new URL('../public/cards/1-25.png', import.meta.url)).toString('base64');
   const functions = [
-    'el', 'span', 'gemEl', 'cardTitle', 'cardBack', 'miniCard', 'miniBack', 'miniRoyal',
-    'renderPlayers', 'renderActionbar', 'gemsRow', 'tokenCountsRow', 'botMoveRow',
+    'el', 'span', 'gemEl', 'privilegeIcons', 'tokenChip', 'cardTitle', 'cardBack', 'miniCard', 'miniBack', 'miniRoyal',
+    'renderPlayers', 'renderActionbar', 'gemsRow', 'tokenCountsRow', 'tokenDeltaRow', 'botMoveRow',
     'botTakeBoard', 'deltasRow', 'requestBot', 'renderBotProgress', 'modalHead',
     'modalDragButton', 'positionModal', 'resetModalPosition',
   ].map((name) => {
@@ -30,6 +30,7 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
       ${constants}
       ${functions}
       const DELTA_LABEL = { points: '分', crowns: '皇冠', privileges: '特权', tokens: 'token', cards: '卡' };
+      window.__reservedCardImage = '${reservedCardImage}';
       const cellName = i => String(i);
       const $ = s => document.querySelector(s);
       const ui = { privileges: [], extras: {}, phase: 'main' };
@@ -82,21 +83,25 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
       check($('#players .bot-progress progress').value === 1 && $('#players .bot-progress').textContent.includes('等待结果'), 'elapsed timeout must wait for the actual result');
       finishBot({});
       await pendingBot;
-      check(!botThinking && !$('#players .bot-progress'), 'completed bot requests must clear the progress bar');
+      check(!botThinking && $('#players .bot-progress progress').value === 0, 'completed bot requests must reset the persistent progress bar');
       const failedBot = requestBot('/api/bot/test');
       failBot(new Error('test error'));
       await failedBot.catch(() => {});
-      check(!botThinking && !$('#players .bot-progress'), 'failed bot requests must clear the progress bar');
+      check(!botThinking && $('#players .bot-progress progress').value === 0, 'failed bot requests must reset the persistent progress bar');
       G.view.current = 1;
       G.botSearch = [{simulations: 1234, moveSimulations: 500, winRate: 0.625, turn: 1}, null];
       renderPlayers();
-      check($('#players .bot-search').textContent.includes('1,234') && $('#players .bot-search').textContent.includes('62.5%'), 'bot panel must show completed simulation count and estimated win rate');
+      check($('#players .winrate')?.textContent.includes('62.5%') && $('#players .winrate').title.includes('1,234'), 'bot head must show estimated win rate with simulation count on hover');
       G.botSearch[0].winRate = 0;
       renderPlayers();
-      check($('#players .bot-search').textContent.includes('0.0%'), 'zero win rate must not be treated as missing');
+      check($('#players .winrate')?.textContent.includes('0.0%'), 'zero win rate must not be treated as missing');
       G.botSearch[0].winRate = null;
       renderPlayers();
-      check($('#players .bot-search').textContent.includes('胜率 —'), 'unavailable estimates must not invent a win rate');
+      check(!$('#players .winrate'), 'unavailable estimates must not invent a win rate');
+      G.view.players[1].name = '你';
+      renderPlayers();
+      check(!document.querySelector('#players .player[data-seat="1"] .bot-search'), 'human panel must omit the bot search line');
+      check($('#players .player[data-seat="0"] .bot-progress progress') != null, 'bot progress bar must be persistent');
       G.view.board = Array(25).fill(null);
       const recap = botMoveRow({ action: {kind: 'take', cells: [0]}, privGems: ['blue'], replenished: true, takeGems: ['red'] });
       check([...recap.querySelectorAll('.bm-step .bm-lab')].map(e => e.textContent).join('|') === '使用特权|补充棋盘|拿取宝石', 'bot recap must show privileges, replenishment, then the main move');
@@ -109,10 +114,12 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
       }
       check(!botMoveRow({action: {kind: 'reserve'}, card: {id: 'test', ability: 'turn'}}).textContent.includes('卡牌能力'), 'reserving a card must not show its ability as activated');
       const purchase = botMoveRow({action: {kind: 'buy'}, card: {id: 'test'}, payment: {blue: 2, white: 1, gold: 1}, tokenChanges: {blue: 0, white: -1, gold: -1, pearl: 1}, deltas: {tokens: -1}});
-      check(purchase.querySelector('.bm-payment').textContent.includes('蓝 ×2') && purchase.querySelector('.bm-payment').textContent.includes('金 ×1'), 'purchase recap must identify each paid gem color and count');
+      const paidLabels = [...purchase.querySelector('.bm-counts').querySelectorAll('.pool-token')].map(t => t.getAttribute('aria-label'));
+      check(paidLabels.includes('蓝 ×2') && paidLabels.includes('金 ×1'), 'purchase recap must identify each paid gem color and count');
       const tokenChanges = purchase.querySelector('.bm-token-changes');
-      check(tokenChanges.textContent.includes('白 −1') && tokenChanges.textContent.includes('金 −1') && tokenChanges.textContent.includes('珠 +1'), 'recap must show color-specific positive and negative token changes');
-      check(!tokenChanges.textContent.includes('蓝'), 'unchanged token colors must be omitted from net changes');
+      const changeLabels = [...tokenChanges.querySelectorAll('.pool-token')].map(t => t.getAttribute('aria-label'));
+      check(changeLabels.includes('白 −1') && changeLabels.includes('金 −1') && changeLabels.includes('珠 +1'), 'recap must show color-specific positive and negative token changes');
+      check(!changeLabels.some(label => label.startsWith('蓝')), 'unchanged token colors must be omitted from net changes');
       check(botMoveRow({action: {kind: 'buy'}, card: {id: 'free'}, payment: {}}).textContent.includes('无需支付宝石'), 'free purchases must show that no gems were paid');
       const reverseRecap = botMoveRow({action: {kind: 'take', cells: []}, privGems: ['blue'], replenished: true, replenishFirst: true});
       check([...reverseRecap.querySelectorAll('.bm-step .bm-lab')].map(e => e.textContent).join('|') === '补充棋盘|使用特权|拿取宝石', 'recap must respect replenish-first moves');
@@ -146,16 +153,17 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
         $('#players').style.width = width + 'px';
         G.view.players = [empty(), empty()];
         renderPlayers();
-        const initial = [...$('#players').children].map(e => e.getBoundingClientRect().height);
-        const button = $('#players .active .p-stats button');
-        check(button?.textContent.includes('特权×1'), 'privilege count must be part of its action button');
+        const button = $('#players .active .tokens button');
+        check(button?.querySelectorAll('.privilege-img').length === 1 && button.textContent === '', 'privilege button must show a scroll image, not text');
+        check($('#players .player:not(.active) .tokens .privilege-img') != null, 'opponent privileges must also show images');
         button?.click();
         check(ui.phase === 'priv', 'privilege button must open privilege selection');
         G.view.players.forEach(p => { p.reserved = [{id: 'single', color: 'white', cost: {blue: 3}}]; });
         renderPlayers();
         const reservedImages = [...$('#players').querySelectorAll('.minicards img')];
         await Promise.all(reservedImages.map(img => {
-          img.src = 'data:image/png;base64,${reservedCardImage}';
+          img.loading = 'eager';
+          img.src = 'data:image/png;base64,' + window.__reservedCardImage;
           return img.decode();
         }));
         $('#players').querySelectorAll('.minicards').forEach(minis => {
@@ -170,14 +178,15 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
           p.cards = PEARL_COLORS.map(color => ({ color, def: { points: 1 } }));
         }
         renderPlayers();
-        [...$('#players').children].forEach((e, i) => check(e.getBoundingClientRect().height === initial[i], 'panel height changed at width ' + width));
+        const heights = [...$('#players').children].map(e => e.getBoundingClientRect().height);
+        check(Math.abs(heights[0] - heights[2]) < 1, 'both player panels must share the same height at width ' + width);
       }
       G.legal.privilegeCells = [];
       renderPlayers();
-      check(!$('#players .active .p-stats button'), 'unavailable privileges must not be actionable');
+      check(!$('#players .active .tokens button'), 'unavailable privileges must not be actionable');
       renderActionbar();
       check(getComputedStyle($('#actionbar')).display === 'none', 'human game must hide bottom action panel');
-      check(getComputedStyle($('#pick-bar')).display === 'none', 'idle human game must omit selection instructions');
+      check(getComputedStyle($('#pick-bar')).display !== 'none', 'idle human game must still reserve the pick bar');
       check(!$('#actionbar').contains($('#move-error')), 'move errors must remain outside the hidden panel');
       check(!$('#human-turn').contains($('#move-error')), 'bot request errors must remain visible outside human-turn controls');
       check(!$('#pick-bar').textContent.includes('点棋盘格拿 token'), 'idle instructions must be removed from the DOM');
@@ -205,7 +214,7 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
       })();
     </script></body>`));
     const screenshot = process.env.LAYOUT_SCREENSHOT ? ['--screenshot=' + process.env.LAYOUT_SCREENSHOT] : [];
-    const result = spawnSync(chrome!, ['--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--window-size=1723,878', ...screenshot, `--user-data-dir=${join(dir, 'profile')}`, '--dump-dom', `file://${join(dir, 'test.html')}`], { encoding: 'utf8', timeout: 20000 });
+    const result = spawnSync(chrome!, ['--headless', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--no-first-run', '--window-size=1723,878', '--virtual-time-budget=5000', ...screenshot, `--user-data-dir=${join(dir, 'profile')}`, '--dump-dom', `file://${join(dir, 'test.html')}`], { encoding: 'utf8', timeout: 20000 });
     expect(result.status, result.stderr).toBe(0);
     const output = [...result.stdout.matchAll(/<pre id="results" class="hidden">(.*?)<\/pre>/g)].at(-1)?.[1];
     expect(output, result.stdout).toBeDefined();

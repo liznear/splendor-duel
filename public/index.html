@@ -4,7 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>璀璨宝石对决 Arena</title>
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=privilege-icons-2">
+<!-- 主题皮肤与共享棋盘装饰 -->
+<link rel="stylesheet" href="/prototype-variants.css?v=privilege-icons-2">
 </head>
 <body>
 <header>
@@ -80,26 +82,23 @@
   <div class="layout">
     <div class="col board-col">
       <div id="board" class="board"></div>
-      <div class="pools" id="pool-bag"></div>
-      <div class="pools">
-        <span>特权池: <b id="pool-priv">-</b></span>
-      </div>
-      <div class="pools pools-royal">
-        <span>皇家卡:</span>
-        <div id="pool-royal"></div>
-      </div>
       <div id="human-controls">
         <div id="human-turn">
-          <div id="pick-bar" class="pick-bar hidden"></div>
+          <div id="pick-bar" class="pick-bar"></div>
         </div>
         <div id="move-error" class="error" role="alert"></div>
+      </div>
+      <div class="pools" id="pool-bag">
+        <span id="pool-priv" class="privilege-pool" aria-label="特权池"></span>
+      </div>
+      <div class="pools pools-royal">
+        <div id="pool-royal" aria-label="皇家卡"></div>
       </div>
     </div>
     <div class="col market-col">
       <div id="pyramid"></div>
     </div>
     <div class="col players-col">
-      <h2>玩家</h2>
       <div id="players"></div>
     </div>
   </div>
@@ -120,6 +119,6 @@
   <div id="modal-box" class="modal"></div>
 </div>
 
-<script type="module" src="/app.js"></script>
+<script type="module" src="/app.js?v=privilege-icons-2"></script>
 </body>
 </html>

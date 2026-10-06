@@ -21,6 +21,21 @@ describe('静态资源', () => {
     expect(html).toContain('璀璨宝石对决');
     expect(html).toContain('/app.js');
   });
+  test('页面强制加载新版特权图片资源', async () => {
+    const html = await (await fetch(BASE + '/')).text();
+    const script = html.match(/src="(\/app\.js\?v=[^"]+)"/)?.[1];
+    expect(script).toBeDefined();
+    if (!script) throw new Error('app.js must have a cache-busting version');
+    for (const name of ['style.css', 'prototype-variants.css']) {
+      expect(html).toContain(`/${name}?v=`);
+    }
+    const response = await fetch(BASE + script);
+    expect(response.status).toBe(200);
+    const code = await response.text();
+    expect(code).toContain('privilegePool.replaceChildren(privilegeIcons(privileges))');
+    expect(code).toContain('privs.append(privilegeIcons(p.privileges))');
+    expect(code).not.toContain('特权×');
+  });
   test('app.js / style.css 可访问', async () => {
     for (const f of ['/app.js', '/style.css']) {
       const r = await fetch(BASE + f);

@@ -1,0 +1,117 @@
+/* ==========================================================
+ * 现代组件风 (原 variant A, a-shadcn) — 唯一主题
+ * 原 B/C 方向已移除; 规则不再依赖 body[data-variant]。
+ * ========================================================== */
+:root {
+  --panel: #ffffff; --panel2: #fafafa; --line: #e4e4e7; --line2: #d4d4d8;
+  --ink: #18181b; --dim: #71717a; --faint: #a1a1aa;
+  --brass: #3f3f46; --brass-hi: #18181b; --brass-ink: #27272a;
+  --radius: 10px;
+}
+body {
+  background: #fafafa;
+  font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+}
+button {
+  border-radius: 8px; border-color: var(--line2); background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .04); font-weight: 500;
+}
+button:hover:not(:disabled) { border-color: #a1a1aa; background: #fafafa; }
+button.primary { background: #18181b; border-color: #18181b; color: #fff; }
+button.primary:hover:not(:disabled) { background: #27272a; }
+button:focus-visible, select:focus-visible,
+input:focus-visible {
+  outline: 2px solid #18181b; outline-offset: 2px; border-radius: 8px;
+}
+.panel { box-shadow: 0 1px 3px rgba(0, 0, 0, .05); }
+header { background: #fff; border-bottom-color: #e4e4e7; }
+h1 { font-weight: 650; letter-spacing: -.01em; }
+h1 .en { color: #71717a; font-weight: 500; }
+h2 { letter-spacing: .08em; font-size: 11px; }
+/* 分段式 tab */
+.tabs {
+  background: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 10px; padding: 3px; gap: 2px;
+}
+.tab { border: none; background: transparent; box-shadow: none; border-radius: 7px; color: #71717a; }
+.tab.active { background: #fff; color: #18181b; box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+/* 棋盘: 白格细线, gem 扁平化 */
+.board { gap: 6px; }
+.coord { color: #d4d4d8; }
+.cell { background: #fff; border-color: #e4e4e7; border-radius: 8px; }
+.cell.clickable { border-color: #a1a1aa; }
+.cell.clickable:hover { box-shadow: 0 0 0 2px rgba(24, 24, 27, .25); }
+.cell.picked { border-color: #18181b; box-shadow: 0 0 0 2px #18181b; background: #ebf2fc; }
+.gem { box-shadow: inset 0 -1px 2px rgba(0, 0, 0, .22), 0 1px 1px rgba(24, 24, 27, .18); }
+.gem::after { display: none; }
+/* 卡与金字塔 */
+.card.img-card { border-color: #d4d4d8; border-radius: 10px; }
+.card.img-card.affordable { border-color: #059669; box-shadow: 0 0 0 2px rgba(5, 150, 105, .25); }
+.card.img-card.affordable .slot { background: #059669; }
+.card.selected, .mini.selected,
+.royal.picked { box-shadow: 0 0 0 2px #059669; border-color: #059669; }
+.deck-chip { background: #fff; border-color: #e4e4e7; border-radius: 8px; }
+/* 玩家面板 */
+.player { background: #fff; }
+.player .p-stats .pts { color: #18181b; }
+.tok { background: #fff; border-color: #e4e4e7; border-radius: 8px; }
+.res-box, .privilege-pool { background: #fff; border-color: #e4e4e7; border-radius: 8px; }
+.panel-card { background: #fff; border: none; border-radius: 8px; }
+.opt-chip { background: #f4f4f5; border: 1px solid #e4e4e7; color: #3f3f46; }
+/* 行动区 / 弹窗 */
+#actionbar { box-shadow: 0 -1px 2px rgba(0, 0, 0, .05); border-top: 1px solid #e4e4e7; }
+.pick-bar { background: #fafafa; border-color: #e4e4e7; border-radius: 8px; }
+.notice { background: #fef9c3; border-color: #eab308; color: #713f12; }
+.modal { border-radius: 12px; border-color: #e4e4e7; }
+#banner { border-color: #18181b; color: #18181b; }
+.session-row { background: #fff; border-color: #e4e4e7; border-radius: 10px; }
+
+/* 共享棋盘: 螺旋补货指引 + 槽位 + 实体 token 素材 */
+.board-col { width: min(390px, calc(100vw - 28px)); }
+.board {
+  position: relative; width: min(100%, 360px);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-rows: repeat(5, auto);
+  gap: 0; padding: 12px; border-radius: 12px;
+  background:
+    repeating-linear-gradient(21deg, transparent 0 3px, rgba(89, 76, 53, .025) 3px 4px),
+    var(--panel2);
+  border: 2px solid var(--line2);
+  box-shadow: inset 0 0 0 2px var(--line);
+}
+.board::after {
+  content: ''; position: absolute; inset: 12px; z-index: 0;
+  background: var(--dim); opacity: .5; pointer-events: none;
+  mask: url('/assets/refill-spiral.svg') center / 100% 100% no-repeat;
+}
+.board .coord { display: none; }
+.board .cell {
+  aspect-ratio: 1; border: 0; border-radius: 0;
+  outline: 1px solid var(--line2); outline-offset: -1px;
+  background: transparent; box-shadow: none;
+}
+.board .cell::before {
+  content: ''; position: absolute; inset: 12%; pointer-events: none;
+  background: url('/assets/socket.png') center / contain no-repeat;
+  border-radius: 50%; background-color: rgba(87, 77, 59, .08);
+}
+.board .cell.empty { color: transparent; }
+.board .cell.empty::before { display: none; }
+.board .cell.clickable:hover { box-shadow: inset 0 0 0 2px var(--brass-hi); }
+.board .cell.picked { box-shadow: inset 0 0 0 3px var(--brass-hi); background: #ebf2fc; }
+.board .cell .gem {
+  width: 76%; height: 76%; z-index: 1;
+  filter: drop-shadow(0 1px 2px rgba(4, 10, 7, .25));
+}
+.gem {
+  background: var(--token-image) center / contain no-repeat;
+  background-blend-mode: normal;
+  box-shadow: none;
+}
+.gem::after { display: none; }
+.gem.t-white { --token-image: url('/assets/token-white.png'); }
+.gem.t-blue { --token-image: url('/assets/token-blue.png'); }
+.gem.t-green { --token-image: url('/assets/token-green.png'); }
+.gem.t-red { --token-image: url('/assets/token-red.png'); }
+.gem.t-black { --token-image: url('/assets/token-black.png'); }
+.gem.t-pearl { --token-image: url('/assets/token-pearl.png'); }
+.gem.t-gold { --token-image: url('/assets/token-gold.png'); }
