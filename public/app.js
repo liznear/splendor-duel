@@ -998,7 +998,12 @@ function renderPlayers() {
 /** 对局结束弹窗: 结果 + 再来一局 (banner 已废弃) */
 function renderGameOverModal(box) {
   box.classList.add('game-over');
-  modalHead(box, G.draw ? '🤝 和局' : `🏆 ${G.names[G.winner]} 获胜!`);
+  const winner = G.names[G.winner];
+  const bot = /bot/i.test(winner); // 与玩家面板一致: bot 显示 emoji, 全名挂 title
+  let title = '🤝 和局';
+  if (!G.draw) title = `🏆 ${bot ? '🤖' : winner} 获胜!`;
+  modalHead(box, title);
+  if (!G.draw && bot) box.querySelector('h3').title = winner;
   if (!G.draw) box.append(el('div', 'hint', `获胜条件: ${G.winReason}`));
   const row = el('div', 'modal-actions end');
   if (G.mode === 'human') {
