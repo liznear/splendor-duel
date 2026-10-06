@@ -58,7 +58,6 @@ h2 { letter-spacing: .08em; font-size: 11px; }
 .pick-bar { background: #fafafa; border-color: #e4e4e7; border-radius: 8px; }
 .notice { background: #fef9c3; border-color: #eab308; color: #713f12; }
 .modal { border-radius: 12px; border-color: #e4e4e7; }
-#banner { border-color: #18181b; color: #18181b; }
 .session-row { background: #fff; border-color: #e4e4e7; border-radius: 10px; }
 
 /* 共享棋盘: 螺旋补货指引 + 槽位 + 实体 token 素材 */

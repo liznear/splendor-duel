@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"strconv"
@@ -49,8 +50,12 @@ func decode(w http.ResponseWriter, r *http.Request, dst any) error {
 	return nil
 }
 func NewHandler(s *Service, publicDir string) http.Handler {
+	return NewHandlerFS(s, os.DirFS(publicDir))
+}
+
+func NewHandlerFS(s *Service, publicFiles fs.FS) http.Handler {
 	mux := http.NewServeMux()
-	files := http.FileServer(http.Dir(publicDir))
+	files := http.FileServerFS(publicFiles)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" && r.Method != "HEAD" {
 			w.WriteHeader(http.StatusMethodNotAllowed)

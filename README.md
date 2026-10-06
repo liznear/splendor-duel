@@ -12,6 +12,14 @@ go build -o /tmp/splender-server ./cmd/server
 PORT=3001 /tmp/splender-server
 ```
 
+Desktop build (Windows/Linux/macOS, zero CGO, UI embedded in the binary). Launching it again while it is running only opens a new browser tab on the existing instance. Sessions live under `os.UserConfigDir()/splender/sessions` (override with `PORT`):
+
+```sh
+go build -o splender ./cmd/desktop
+GOOS=windows GOARCH=amd64 go build -o splender.exe ./cmd/desktop
+GOOS=darwin GOARCH=arm64 go build -o splender-macos ./cmd/desktop
+```
+
 Run from the repository root, or set `PUBLIC_DIR` and `SESSIONS_DIR`. Sessions default to `sessions/` and remain compatible with the original JSONL seed/move format. Resuming an old LLM or random session selects greedy unless a supported agent is supplied explicitly.
 
 ## Test

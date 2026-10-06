@@ -185,9 +185,6 @@ button .gem { width: 13px; height: 13px; }
 #turn-indicator { color: var(--dim); font-size: 13px; }
 input[type="number"] { background: var(--panel); border: 1px solid var(--line2); color: var(--ink); border-radius: 8px; padding: 6px; width: 56px; }
 
-/* 横幅 */
-#banner { margin: 14px; padding: 16px; border-radius: var(--radius); text-align: center; font-size: 19px; font-weight: 700; background: var(--panel); border: 1px solid var(--brass-hi); color: var(--brass-ink); }
-
 /* 设置 */
 header h1 { cursor: pointer; user-select: none; transition: opacity .12s; }
 header h1:hover { opacity: .75; }
@@ -217,7 +214,6 @@ body:has(#game:not(.hidden)) > header { flex-shrink: 0; }
 .players-col .minicards { height: 100%; align-items: center; }
 .players-col .cards-line { overflow-y: hidden; scrollbar-width: none; }
 .players-col .mini { height: min(100%, 114px); width: auto; max-width: 76px; }
-#game > #banner { flex-shrink: 0; margin-bottom: 0; }
 @media (max-width: 1250px) { .layout { grid-template-columns: auto 1fr; } #game .layout { grid-template-rows: repeat(2, minmax(0, 1fr)); } .col.players-col { grid-column: 1 / -1; } }
 @media (max-width: 880px) { .layout { grid-template-columns: minmax(0, 1fr); } #game .layout { grid-template-rows: repeat(3, minmax(0, 1fr)); } .board { grid-template-columns: 14px repeat(5, minmax(40px, 54px)); grid-template-rows: 14px repeat(5, minmax(40px, 54px)); } .cell .gem { width: 26px; height: 26px; } }
 
@@ -245,6 +241,13 @@ body:has(#game:not(.hidden)) > header { flex-shrink: 0; }
 .modal .mcell.picked { box-shadow: 0 0 0 2px var(--brass-hi); border-color: var(--brass-hi); }
 .modal .mcell .gem { width: 28px; height: 28px; }
 .modal-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.modal-actions.end { justify-content: flex-end; }
+.modal.game-over { min-width: min(440px, 80vw); }
+.modal.game-over .modal-head { margin-bottom: 14px; }
+.modal.game-over h3 { font-size: 30px; }
+.modal.game-over .hint { font-size: 15px; }
+.modal.game-over .modal-actions { margin-top: 20px; }
+.modal.game-over button.big { font-size: 18px; padding: 14px 36px; }
 
 /* 卡片放大详情: 左图右按钮 */
 .card-dialog { display: grid; grid-template-columns: min(240px, 40vw) 230px; gap: 20px; align-items: start; }

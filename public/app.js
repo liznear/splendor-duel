@@ -469,7 +469,6 @@ function render() {
   renderBoard();
   renderPyramid();
   renderPlayers();
-  renderBanner();
   renderActionbar();
   renderModals();
 }
@@ -479,6 +478,7 @@ function renderModals() {
   const root = $('#modal-root'), box = $('#modal-box');
   let show = false;
   box.replaceChildren();
+  box.classList.remove('game-over'); // 结束弹窗专用样式, 其他弹窗不开
   if (noticePending() && G.noticeSeat === G.seat) {
     renderNoticeModal(box);
     show = true;
@@ -493,6 +493,9 @@ function renderModals() {
     show = true;
   } else if (ui.showBotMove && (G.recentMoves?.length ?? 0) > 0) {
     renderBotMoveModal(box);
+    show = true;
+  } else if (G.over && !ui.overDismissed) {
+    renderGameOverModal(box);
     show = true;
   }
   root.classList.toggle('hidden', !show);
@@ -577,6 +580,7 @@ function closeModal() {
   else if (ui.showBotMove) ui.showBotMove = false;
   else if (ui.pick) { ui.pick = null; ui.hint = ''; }
   else if (ui.action) { ui.action = null; ui.extras = {}; ui.takeSamePick = null; ui.extrasOpen = false; }
+  else if (G.over) ui.overDismissed = true; // 结束弹窗可关掉看终局棋盘
   render();
 }
 
@@ -991,12 +995,18 @@ function renderPlayers() {
   renderBotProgress();
 }
 
-function renderBanner() {
-  const b = $('#banner');
-  if (G.over) {
-    b.classList.remove('hidden');
-    b.textContent = G.draw ? '🤝 和局' : `🏆 ${G.names[G.winner]} 获胜! (条件: ${G.winReason})`;
-  } else b.classList.add('hidden');
+/** 对局结束弹窗: 结果 + 再来一局 (banner 已废弃) */
+function renderGameOverModal(box) {
+  box.classList.add('game-over');
+  modalHead(box, G.draw ? '🤝 和局' : `🏆 ${G.names[G.winner]} 获胜!`);
+  if (!G.draw) box.append(el('div', 'hint', `获胜条件: ${G.winReason}`));
+  const row = el('div', 'modal-actions end');
+  if (G.mode === 'human') {
+    const again = el('button', 'primary big', '再来一局');
+    again.addEventListener('click', () => $('#btn-new').click()); // 复用顶栏新对局逻辑 (同难度重开)
+    row.append(again);
+  }
+  box.append(row);
 }
 
 // ---------------- 行动区 ----------------
