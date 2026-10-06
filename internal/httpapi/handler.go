@@ -56,6 +56,7 @@ func NewHandler(s *Service, publicDir string) http.Handler {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		w.Header().Set("Cache-Control", "no-cache") // 每次重验证, 静态资源永远拿最新, 无需 ?v= 版本号
 		files.ServeHTTP(w, r)
 	})
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {

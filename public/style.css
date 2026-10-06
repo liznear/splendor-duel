@@ -143,7 +143,6 @@ body[data-variant] .player button.res-box:hover, button.res-box:hover { backgrou
 .tok { display: inline-flex; align-items: center; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px 3px 4px; font-size: 14px; }
 .tok .gem { width: 18px; height: 18px; }
 .tok .n { font-family: var(--serif); font-size: 15px; font-weight: 600; }
-.tok input { border: none; background: transparent; font-family: var(--serif); font-size: 13px; width: 34px; text-align: center; padding: 0; outline: none; color: var(--ink); }
 .tok.cchip .n { font-family: var(--sans); font-size: 14px; font-weight: 600; }
 .cchip .pool-token { width: 22px; height: 22px; }
 .cchip .pool-token .gem { grid-area: 1 / 1; width: 100%; height: 100%; }
@@ -295,6 +294,12 @@ body:has(#game:not(.hidden)) > header { flex-shrink: 0; }
 .extras-modal { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 14px; min-width: min(480px, 80vw); }
 .extras-modal .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; color: var(--dim); width: 100%; }
 .extras-modal .row b { color: var(--ink); }
+.extras-modal .discard-list { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.extras-modal .discard-item { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.extras-modal .discard-item .step { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); font-size: 18px; line-height: 1; cursor: pointer; color: var(--ink); }
+.extras-modal .discard-item .step:hover { background: var(--line); }
+.extras-modal .discard-item .pool-token { width: 34px; height: 34px; }
+.extras-modal .discard-item .pool-token .gem { grid-area: 1 / 1; width: 100%; height: 100%; }
 
 /* ---------- bot 输出 ---------- */
 

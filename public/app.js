@@ -965,8 +965,7 @@ function renderPlayers() {
 
     const reserved = el('div', 'panel-card reserved');
     reserved.append(el('span', 'lab', '预留:'));
-    if (p.reserved.length === 0) reserved.append(el('span', 'hint', '无'));
-    else if (mine || G.mode === 'agents') {
+    if (p.reserved.length > 0 && (mine || G.mode === 'agents')) {
       // 本回合买得起的预留卡标绿框 (与金字塔一致)
       const affordRes = mine && myTurn()
         ? new Set((G.legal?.actions ?? []).filter((a) => a.action.kind === 'buy' && a.action.from.kind === 'reserved').map((a) => a.action.from.index))
@@ -980,7 +979,7 @@ function renderPlayers() {
         minis.append(m);
       });
       reserved.append(minis);
-    } else {
+    } else if (p.reserved.length > 0) {
       const minis = el('div', 'minicards');
       for (let i = 0; i < p.reserved.length; i++) minis.append(miniBack());
       reserved.append(minis);
@@ -1162,22 +1161,31 @@ function renderExtrasModal(box) {
   const excess = discardExcess();
   if (excess > 0) {
     const after = myPreviewTokens(); // 结算后持有, 输入上限按它算
-    const div = el('div', 'row');
-    div.append(el('b', '', `token 将超 10, 弃置 ${excess} 枚:`));
+    const head = el('div', 'row');
+    head.append(el('b', '', `token 将超 10, 弃置 ${excess} 枚:`));
+    body.append(head);
+    const list = el('div', 'discard-list');
     ALL_COLORS.filter((t) => after[t] > 0).forEach((t) => {
-      const inp = document.createElement('input');
-      inp.type = 'number'; inp.min = '0'; inp.max = String(after[t]);
-      inp.value = ui.extras.discard?.[t] ?? 0;
-      inp.addEventListener('input', () => {
-        (ui.extras.discard ??= {})[t] = Number(inp.value || 0);
-        refreshExtrasConfirm(excess); // 不整页重渲染, 保住输入焦点
-      });
-      const tok = el('span', 'tok');
-      tok.append(gemEl(t), inp);
-      div.append(tok);
+      const item = el('div', 'discard-item');
+      const num = el('span', 'n', String(ui.extras.discard?.[t] ?? 0));
+      const bump = (d) => {
+        const v = Math.max(0, Math.min(after[t], (ui.extras.discard?.[t] ?? 0) + d));
+        (ui.extras.discard ??= {})[t] = v;
+        num.textContent = String(v); // 局部刷新, 不整页重渲染
+        refreshExtrasConfirm(excess);
+      };
+      const minus = el('button', 'step', '−');
+      minus.type = 'button';
+      minus.addEventListener('click', () => bump(-1));
+      const plus = el('button', 'step', '+');
+      plus.type = 'button';
+      plus.addEventListener('click', () => bump(1));
+      const tok = el('span', `pool-token ${TCSS[t]}`); // 数字叠在 token 上
+      tok.append(gemEl(t), num);
+      item.append(minus, tok, plus);
+      list.append(item);
     });
-    div.append(el('span', 'error-inline discard-hint', ''));
-    body.append(div);
+    body.append(list, el('span', 'error-inline discard-hint', ''));
     refreshExtrasConfirm(excess);
   }
   box.append(body);
