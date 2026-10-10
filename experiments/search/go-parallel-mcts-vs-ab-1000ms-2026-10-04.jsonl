@@ -1,8 +1,0 @@
-{"type": "meta", "parallel": "mcts/8@1000", "alphaBeta": "ab@1000", "plannedGames": 6, "pairs": 3, "jobs": 1, "commit": "85952dc"}
-{"type": "game", "pair": 1, "seed": 1000, "parallelSeat": 0, "winnerSeat": 0, "draw": false, "turns": 63, "seconds": 53.065, "winner": "parallel"}
-{"type": "game", "pair": 1, "seed": 1000, "parallelSeat": 1, "winnerSeat": 1, "draw": false, "turns": 72, "seconds": 54.562, "winner": "parallel"}
-{"type": "game", "pair": 2, "seed": 8919, "parallelSeat": 0, "winnerSeat": 1, "draw": false, "turns": 71, "seconds": 59.899, "winner": "alpha-beta"}
-{"type": "game", "pair": 2, "seed": 8919, "parallelSeat": 1, "winnerSeat": 1, "draw": false, "turns": 52, "seconds": 44.443, "winner": "parallel"}
-{"type": "game", "pair": 3, "seed": 16838, "parallelSeat": 0, "winnerSeat": 0, "draw": false, "turns": 60, "seconds": 49.878, "winner": "parallel"}
-{"type": "game", "pair": 3, "seed": 16838, "parallelSeat": 1, "winnerSeat": 1, "draw": false, "turns": 67, "seconds": 55.269, "winner": "parallel"}
-{"type": "summary", "completed": 6, "parallelWins": 5, "alphaBetaWins": 1, "draws": 0, "parallelWinsFirst": 2, "parallelWinsSecond": 3, "meanTurns": 64.2, "totalSeconds": 317.1}

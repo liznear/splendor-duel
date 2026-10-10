@@ -1,9 +1,0 @@
-{"game":1,"seed":38600000,"aSeat":0,"winner":"A","turns":72}
-{"game":2,"seed":38600000,"aSeat":1,"winner":"B","turns":78}
-{"game":3,"seed":38607919,"aSeat":0,"winner":"A","turns":68}
-{"game":4,"seed":38607919,"aSeat":1,"winner":"B","turns":65}
-{"game":5,"seed":38615838,"aSeat":0,"winner":"A","turns":68}
-{"game":6,"seed":38615838,"aSeat":1,"winner":"A","turns":72}
-{"game":7,"seed":38623757,"aSeat":0,"winner":"B","turns":73}
-{"game":8,"seed":38623757,"aSeat":1,"winner":"A","turns":79}
-{"summary":true,"a":"./cand-mcts-par.ts:workers=8","b":"./cand-mcts-par.ts:workers=1","aBudget":"1000ms","bBudget":"1000ms","maxTurns":180,"games":8,"aWins":5,"bWins":3,"draws":0,"cappedDraws":0,"illegal":0,"aMsPerMove":892,"bMsPerMove":916,"aPlayoutsPerMove":109496,"bPlayoutsPerMove":32798}
