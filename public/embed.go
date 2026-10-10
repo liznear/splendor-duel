@@ -3,5 +3,5 @@ package public
 
 import "embed"
 
-//go:embed all:api.js all:app.js all:index.html all:preview.js all:prototype-variants.css all:style.css all:assets all:cards
+//go:embed all:api.js all:app.js all:index.html all:manifest.json all:preview.js all:prototype-variants.css all:style.css all:assets all:cards
 var Files embed.FS

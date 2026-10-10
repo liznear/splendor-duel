@@ -12,7 +12,7 @@ go build -o /tmp/splender-server ./cmd/server
 PORT=3001 /tmp/splender-server
 ```
 
-Desktop build (Windows/Linux/macOS, zero CGO, UI embedded in the binary). Launching it again while it is running only opens a new browser tab on the existing instance. Sessions live under `os.UserConfigDir()/splender/sessions` (override with `PORT`):
+Desktop build (Windows/Linux/macOS, zero CGO, UI embedded in the binary). Launching it again while it is running only opens a new browser tab on the existing instance. The served UI is an installable PWA: in Chrome/Edge, use the address-bar install button to get a standalone app window at `http://127.0.0.1:17321`. Sessions live under `os.UserConfigDir()/splender/sessions` (override with `PORT`):
 
 ```sh
 go build -o splender ./cmd/desktop
