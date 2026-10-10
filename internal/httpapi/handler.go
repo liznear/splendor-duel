@@ -244,6 +244,29 @@ func NewHandlerFS(s *Service, publicFiles fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/step/{id}", advance(false, true))
 	mux.HandleFunc("POST /api/v1/games/{id}/bot", advance(true, false))
 	mux.HandleFunc("POST /api/v1/games/{id}/step", advance(false, false))
+	undo := func(legacy bool) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Seat *int `json:"seat"`
+			}
+			if err := decode(w, r, &body); err != nil {
+				failure(w, err)
+				return
+			}
+			if body.Seat == nil {
+				failure(w, bad("seat is required"))
+				return
+			}
+			out, err := s.Undo(r.PathValue("id"), *body.Seat)
+			if err != nil {
+				failure(w, err)
+				return
+			}
+			respond(w, out, legacy)
+		}
+	}
+	mux.HandleFunc("POST /api/undo/{id}", undo(true))
+	mux.HandleFunc("POST /api/v1/games/{id}/undo", undo(false))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		failure(w, &apiError{404, "endpoint_not_found", "未知接口"})
 	})

@@ -1083,6 +1083,21 @@ function renderActionbar() {
     return;
   }
 
+  // 悔棋仅在自己回合显示
+  const undo = el('button', 'ghost undo-btn', '↩ 悔棋');
+  undo.disabled = !G.turn;
+  undo.title = '撤回到你上一次行动前(连同机器人的应手)';
+  undo.addEventListener('click', async () => {
+    try {
+      Object.assign(G, await api(`/api/undo/${G.id}`, { seat: G.seat }));
+      ui = freshUi();
+      $('#move-error').textContent = '';
+      render();
+    } catch (err) {
+      $('#move-error').textContent = err.message;
+      render();
+    }
+  });
   // 当前选择进度: 按颜色聚合, 数字写在 token 中间 (不显示坐标)
   if (ui.pick?.t === 'take') {
     const counts = {};
@@ -1117,7 +1132,7 @@ function renderActionbar() {
     ui.pick = null; ui.action = null; ui.extras = {}; ui.takeSamePick = null;
     render();
   });
-  pick.append(clear);
+  pick.append(clear, undo);
 }
 
 /** 待补充的选择 (阻塞提交, 由弹窗收集) */

@@ -349,3 +349,178 @@ func TestResumedNamesAndParallelSettingsReplay(t *testing.T) {
 		}
 	}
 }
+
+// driveHuman plays a human-mode game to completion: the human seat always
+// submits the first legal action, the bot answers through /bot.
+func driveHuman(t *testing.T, h http.Handler, base, state, move, bot string) map[string]any {
+	t.Helper()
+	for i := 0; ; i++ {
+		if i > 500 {
+			t.Fatal("human self-play did not finish")
+		}
+		status, out := request(t, h, "GET", state, nil)
+		if status != 200 {
+			t.Fatal(out)
+		}
+		if out["over"] == true {
+			return out
+		}
+		if out["pending"] == true {
+			if status, out = request(t, h, "POST", bot, map[string]any{}); status != 200 {
+				t.Fatal(out)
+			}
+			continue
+		}
+		actions := out["legal"].(map[string]any)["actions"].([]any)
+		if len(actions) == 0 {
+			t.Fatal("human turn without legal actions")
+		}
+		action := actions[0].(map[string]any)["action"]
+		if status, out = request(t, h, "POST", move, map[string]any{"seat": 1, "move": map[string]any{"action": action}}); status != 200 {
+			t.Fatal(out)
+		}
+	}
+}
+
+func TestUndoRewindsToHumanDecision(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprint(legacy), func(t *testing.T) {
+			_, h := harness(t)
+			out := created(t, h, legacy, "human", 1, "greedy")
+			id := out["id"].(string)
+			undo := "/api/v1/games/" + id + "/undo"
+			bot := "/api/v1/games/" + id + "/bot"
+			option := "/api/v1/games/" + id + "/options"
+			move := "/api/v1/games/" + id + "/moves"
+			if legacy {
+				undo = "/api/undo/" + id
+				bot = "/api/bot/" + id
+				option = "/api/option/" + id
+				move = "/api/move/" + id
+			}
+
+			status, out := request(t, h, "POST", bot, map[string]any{})
+			if status != 200 || out["current"] != float64(1) {
+				t.Fatal("bot did not yield", out)
+			}
+			legal := out["legal"].(map[string]any)
+			cell := int(legal["privilegeCells"].([]any)[0].(float64))
+			status, out = request(t, h, "POST", option, map[string]any{"seat": 1, "privileges": []int{cell}})
+			if status != 200 {
+				t.Fatal(out)
+			}
+			afterOption := out["turn"].(float64)
+			action := out["legal"].(map[string]any)["actions"].([]any)[0].(map[string]any)["action"]
+			status, out = request(t, h, "POST", move, map[string]any{"seat": 1, "move": map[string]any{"action": action}})
+			if status != 200 || out["pending"] != true {
+				t.Fatal(out)
+			}
+			status, out = request(t, h, "POST", bot, map[string]any{})
+			if status != 200 || out["current"] != float64(1) {
+				t.Fatal("bot did not reply", out)
+			}
+
+			// Seat gating.
+			status, _ = request(t, h, "POST", undo, map[string]any{"seat": 0})
+			if status != 400 {
+				t.Fatal("opponent seat undo accepted")
+			}
+			status, out = request(t, h, "POST", undo, map[string]any{"seat": 1})
+			if status != 200 || out["current"] != float64(1) || out["turn"] != afterOption {
+				t.Fatal("undo did not rewind the move and bot reply", out)
+			}
+			// Second undo drops the option too; the privilege returns.
+			status, out = request(t, h, "POST", undo, map[string]any{"seat": 1})
+			if status != 200 {
+				t.Fatal(out)
+			}
+			me := out["view"].(map[string]any)["players"].([]any)[1].(map[string]any)
+			if me["privileges"] != float64(1) {
+				t.Fatal("privilege not returned after undoing the option")
+			}
+			// Only the bot's opening move remains: nothing left to undo.
+			status, out = request(t, h, "POST", undo, map[string]any{"seat": 1})
+			if status != 400 {
+				t.Fatal("undo past the first human decision accepted", out)
+			}
+		})
+	}
+}
+
+func TestUndoRewindsIntoResumedPrefix(t *testing.T) {
+	s, h := harness(t)
+	out := created(t, h, false, "human", 1, "greedy")
+	id := out["id"].(string)
+	first := out["file"].(string)
+	bot := "/api/v1/games/" + id + "/bot"
+	status, out := request(t, h, "POST", bot, map[string]any{})
+	if status != 200 {
+		t.Fatal(out)
+	}
+	cell := int(out["legal"].(map[string]any)["privilegeCells"].([]any)[0].(float64))
+	status, out = request(t, h, "POST", "/api/v1/games/"+id+"/options", map[string]any{"seat": 1, "privileges": []int{cell}})
+	if status != 200 {
+		t.Fatal(out)
+	}
+
+	// Resume the session (the option lives in the resumed prefix), act, then
+	// undo twice: the second rewind must shrink the resume prefix.
+	status, out = request(t, h, "POST", "/api/v1/sessions/resume", map[string]any{"file": first})
+	if status != 200 {
+		t.Fatal(out)
+	}
+	id2 := out["id"].(string)
+	second := out["file"].(string)
+	undo2 := "/api/v1/games/" + id2 + "/undo"
+	action := out["legal"].(map[string]any)["actions"].([]any)[0].(map[string]any)["action"]
+	status, out = request(t, h, "POST", "/api/v1/games/"+id2+"/moves", map[string]any{"seat": 1, "move": map[string]any{"action": action}})
+	if status != 200 {
+		t.Fatal(out)
+	}
+	status, out = request(t, h, "POST", undo2, map[string]any{"seat": 1})
+	if status != 200 || out["current"] != float64(1) {
+		t.Fatal("undo did not drop the resumed session's own move", out)
+	}
+	status, out = request(t, h, "POST", undo2, map[string]any{"seat": 1})
+	if status != 200 {
+		t.Fatal(out)
+	}
+	if me := out["view"].(map[string]any)["players"].([]any)[1].(map[string]any); me["privileges"] != float64(1) {
+		t.Fatal("rewind into resume prefix lost the option undo")
+	}
+	record, err := s.sessions.Read(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(record.Meta.Resume.Events); n != 1 {
+		t.Fatal("resume prefix not shrunk to the bot's opening move:", n)
+	}
+}
+
+func TestUndoRevivesFinishedGame(t *testing.T) {
+	_, h := harness(t)
+	out := created(t, h, false, "human", 1, "greedy")
+	id := out["id"].(string)
+	final := driveHuman(t, h, "/api/v1/games/"+id, "/api/v1/games/"+id+"?seat=1", "/api/v1/games/"+id+"/moves", "/api/v1/games/"+id+"/bot")
+	if final["over"] != true {
+		t.Fatal("self-play did not finish")
+	}
+	status, out := request(t, h, "POST", "/api/v1/games/"+id+"/undo", map[string]any{"seat": 1})
+	if status != 200 || out["over"] != false || out["current"] != float64(1) {
+		t.Fatal("undo did not revive the finished game", out)
+	}
+	action := out["legal"].(map[string]any)["actions"].([]any)[0].(map[string]any)["action"]
+	status, out = request(t, h, "POST", "/api/v1/games/"+id+"/moves", map[string]any{"seat": 1, "move": map[string]any{"action": action}})
+	if status != 200 {
+		t.Fatal("recorder not writable after undo revive", out)
+	}
+}
+
+func TestUndoRejectsAgentsMode(t *testing.T) {
+	_, h := harness(t)
+	out := created(t, h, false, "agents", 0, "greedy")
+	status, _ := request(t, h, "POST", "/api/v1/games/"+out["id"].(string)+"/undo", map[string]any{"seat": 0})
+	if status != 400 {
+		t.Fatal("agents mode undo accepted")
+	}
+}

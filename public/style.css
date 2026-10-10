@@ -170,6 +170,7 @@ body[data-variant] .player button.res-box:hover, button.res-box:hover { backgrou
 .pick-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; height: 56px; }
 .pick-bar .hint { font-size: 12.5px; }
 .pick-bar .primary { margin-left: auto; }
+.pick-bar .undo-btn { margin-left: auto; }
 .pick-bar .pool-token { width: 28px; height: 28px; }
 .pick-bar .pool-token .n { font-size: 12px; }
 .opt-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--panel); border: 1px dashed var(--brass-hi); color: var(--brass-ink); border-radius: 999px; padding: 4px 12px; font-size: 12.5px; font-weight: 600; }

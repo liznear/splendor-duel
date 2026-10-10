@@ -20,10 +20,10 @@ export function requestFor(path, body) {
   } else if (url.pathname === '/api/sessions') {
     target = '/api/v1/sessions';
   } else {
-    const match = /^\/api\/(state|move|option|bot|step)\/([\w-]+)$/.exec(url.pathname);
+    const match = /^\/api\/(state|move|option|bot|step|undo)\/([\w-]+)$/.exec(url.pathname);
     if (!match) throw new Error(`Unknown API operation: ${path}`);
     const [, operation, id] = match;
-    const suffix = { state: '', move: '/moves', option: '/options', bot: '/bot', step: '/step' }[operation];
+    const suffix = { state: '', move: '/moves', option: '/options', bot: '/bot', step: '/step', undo: '/undo' }[operation];
     target = `/api/v1/games/${id}${suffix}`;
   }
   return { path: target + url.search, body };

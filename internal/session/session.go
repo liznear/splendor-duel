@@ -3,6 +3,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -88,6 +89,37 @@ func (s Store) Create(meta Meta) (*Recorder, error) {
 	return r, nil
 }
 func (r *Recorder) File() string { return filepath.Base(r.path) }
+
+// Rewrite atomically replaces the session file with rec and revives a
+// recorder that had stopped on a recorded result.
+func (r *Recorder) Rewrite(rec Record) error {
+	var b bytes.Buffer
+	meta := rec.Meta
+	meta.Type = "meta"
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	b.Write(data)
+	b.WriteByte('\n')
+	for _, e := range rec.Events {
+		data, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		b.Write(data)
+		b.WriteByte('\n')
+	}
+	tmp := r.path + ".tmp"
+	if err = os.WriteFile(tmp, b.Bytes(), 0600); err != nil {
+		return err
+	}
+	if err = os.Rename(tmp, r.path); err != nil {
+		return err
+	}
+	r.done = false
+	return nil
+}
 func (r *Recorder) Write(e Event) error {
 	if r.done {
 		return nil
@@ -156,50 +188,99 @@ func (r Record) Prefix() []Event {
 	}
 	return out
 }
-func (r Record) Replay() (*game.State, error) {
-	meta := r.Meta
-	seed, first, names := meta.Seed, meta.FirstSeat, meta.Names
-	if meta.Resume != nil {
-		seed = meta.Resume.Seed
-		first = meta.Resume.FirstSeat
-		if meta.Resume.Names != nil {
-			names = *meta.Resume.Names
+func (r Record) initial() (*game.State, error) {
+	seed, first, names := r.Meta.Seed, r.Meta.FirstSeat, r.Meta.Names
+	if r.Meta.Resume != nil {
+		seed = r.Meta.Resume.Seed
+		first = r.Meta.Resume.FirstSeat
+		if r.Meta.Resume.Names != nil {
+			names = *r.Meta.Resume.Names
 		}
 	}
 	if first != nil && (*first < 0 || *first > 1) {
 		return nil, errors.New("invalid first seat")
 	}
-	s := game.New(seed, names, first)
+	return game.New(seed, names, first), nil
+}
+
+// Step applies one recorded event, mirroring the live game transitions.
+func Step(s *game.State, e Event) (*game.State, error) {
+	switch e.Type {
+	case "names":
+		if e.Names == nil {
+			return nil, errors.New("missing recorded names")
+		}
+		for i, name := range *e.Names {
+			s.Players[i].Name = name
+		}
+		return s, nil
+	case "move":
+		if e.Move == nil {
+			return nil, errors.New("missing recorded move")
+		}
+		return game.Apply(s, *e.Move)
+	case "option":
+		return game.Option(s, game.Move{Privileges: e.Privileges, Replenish: e.Replenish})
+	case "replenish":
+		return game.Replenish(s)
+	}
+	return nil, fmt.Errorf("unknown event: %s", e.Type)
+}
+
+func (r Record) Replay() (*game.State, error) {
+	s, err := r.initial()
+	if err != nil {
+		return nil, err
+	}
 	for i, e := range r.Prefix() {
 		if s.Over() {
 			break
 		}
-		var err error
-		switch e.Type {
-		case "names":
-			if e.Names == nil {
-				return nil, errors.New("missing recorded names")
-			}
-			for i, name := range *e.Names {
-				s.Players[i].Name = name
-			}
-		case "move":
-			if e.Move == nil {
-				return nil, errors.New("missing recorded move")
-			}
-			s, err = game.Apply(s, *e.Move)
-		case "option":
-			s, err = game.Option(s, game.Move{Privileges: e.Privileges, Replenish: e.Replenish})
-		case "replenish":
-			s, err = game.Replenish(s)
-		default:
-			return nil, fmt.Errorf("unknown event: %s", e.Type)
-		}
+		s, err = Step(s, e)
 		if err != nil {
 			return nil, fmt.Errorf("event %d: %w", i, err)
 		}
 	}
 	return s, nil
+}
+
+// Rewind truncates the record to just before seat's most recent decision
+// (their last recorded move or option) and replays the kept events. Events
+// past that point, including the opponent's reply and a trailing result,
+// are dropped. ok is false when seat has no recorded decision to undo.
+func (r Record) Rewind(seat int) (Record, *game.State, bool, error) {
+	events := r.Prefix()
+	resume := 0
+	if r.Meta.Resume != nil {
+		resume = len(r.Meta.Resume.Events)
+	}
+	cut := -1
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if (e.Type == "move" || e.Type == "option") && e.Seat == seat {
+			cut = i
+			break
+		}
+	}
+	if cut < 0 {
+		return Record{}, nil, false, nil
+	}
+	kept := events[:cut]
+	out := Record{Meta: r.Meta, Events: []Event{}}
+	if r.Meta.Resume != nil && cut < resume {
+		// The cut reaches into the resumed prefix: shrink it instead of the
+		// session's own events, which are dropped entirely.
+		res := *r.Meta.Resume
+		res.Events = append([]Event{}, kept...)
+		out.Meta.Resume = &res
+	} else {
+		out.Events = append([]Event{}, kept[resume:]...)
+	}
+	state, err := out.Replay()
+	if err != nil {
+		return Record{}, nil, false, err
+	}
+	return out, state, true, nil
 }
 
 type Summary struct {

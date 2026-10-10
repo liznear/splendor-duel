@@ -318,6 +318,51 @@ func (s *Service) Option(id string, seat int, move game.Move) (Snapshot, error) 
 	return m.snapshot(m.human), nil
 }
 
+// Undo rewinds a human-mode game to just before the player's most recent
+// move or option, dropping the opponent's reply with it, and rewrites the
+// session file in place so the recording stays authoritative.
+func (s *Service) Undo(id string, seat int) (Snapshot, error) {
+	m, err := s.get(id)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.mode != "human" {
+		return Snapshot{}, bad("该对局不是人机模式")
+	}
+	if !seatValid(seat) || seat != m.human {
+		return Snapshot{}, bad("只能悔自己的棋")
+	}
+	if m.job != nil {
+		return Snapshot{}, bad("机器人正在思考, 请稍候再悔棋")
+	}
+	record, err := s.sessions.Read(m.recorder.File())
+	if err != nil {
+		return Snapshot{}, err
+	}
+	kept, state, ok, err := record.Rewind(seat)
+	if err != nil {
+		return Snapshot{}, bad(err.Error())
+	}
+	if !ok {
+		return Snapshot{}, bad("没有可悔的棋")
+	}
+	if err = m.recorder.Rewrite(kept); err != nil {
+		return Snapshot{}, err
+	}
+	m.state = state
+	m.resetMCTS()
+	m.feed = []Visual{}
+	m.notice = nil
+	m.noticeSeat = nil
+	m.botSearch = [2]*BotSearch{}
+	if err = m.ensurePlayable(); err != nil {
+		return Snapshot{}, err
+	}
+	return m.snapshot(m.human), nil
+}
+
 // Advance coalesces duplicate requests. The shared operation is owned by the
 // service context; one disconnected HTTP caller cannot cancel another's turn.
 func (s *Service) Advance(ctx context.Context, id string, human bool) (Snapshot, error) {
