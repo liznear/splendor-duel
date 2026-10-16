@@ -207,12 +207,57 @@ const goldCells = () => G.view.board.map((t, i) => (t === 'gold' ? i : -1)).filt
 
 /** 特权/补货是低频可选行动: 不自动弹窗, 由侧栏按钮按需打开 */
 function freshUi() {
-  return { pick: null, action: null, privileges: [], phase: 'main', takeSamePick: null, extras: {}, hint: '', extrasOpen: false, showBotMove: false, noticeSeen: null };
+  return { pick: null, action: null, privileges: [], phase: 'main', takeSamePick: null, extras: {}, hint: '', extrasOpen: false, showBotMove: false, hintOpen: false, noticeSeen: null };
 }
 /** 被迫补货提示的去重键: 文本可能跨回合相同, 拼上回合号 */
 const noticeKey = () => `${G.turn}:${G.notice}`;
 /** 有未读的被迫补货提示 (仅自己被迫时弹 modal, bot 被迫只走提示条) */
 const noticePending = () => G.mode === 'human' && !G.over && G.notice && ui.noticeSeen !== noticeKey();
+/** 💡 推荐应对弹窗: bot 搜索附带的本方最佳应对估计, 可一键采纳 */
+function renderHintModal(box) {
+  const reply = G.botSearch?.[1 - G.seat]?.reply;
+  if (!reply) return;
+  modalHead(box, '💡 推荐应对');
+  box.append(el('div', 'hint', reply.text));
+  const move = reply.move;
+  // 拿取类行动附迷你棋盘; 需补货才存在的格子无颜色可示, 只靠文本描述。
+  const cells = move.action?.cells ?? [];
+  if (move.action?.kind === 'take' && cells.length > 0 && cells.every((c) => G.view.board?.[c] != null)) {
+    box.append(botTakeBoard({ action: move.action, takeGems: cells.map((c) => G.view.board[c]) }));
+  }
+  const row = el('div', 'modal-actions');
+  const ok = el('button', 'primary big', '应用 ▸');
+  ok.addEventListener('click', applyHint);
+  row.append(ok);
+  const no = el('button', 'ghost', '关闭');
+  no.addEventListener('click', closeModal);
+  row.append(no);
+  box.append(row);
+}
+
+/** 一键采纳推荐: 捆绑可选行动与能力选择已在走法内, 原样提交即可 */
+async function applyHint() {
+  const move = G.botSearch?.[1 - G.seat]?.reply?.move;
+  if (!myTurn() || !move) { closeModal(); return; }
+  ui.hintOpen = false;
+  $('#move-error').textContent = '';
+  $('#human-turn').classList.add('hidden');
+  try {
+    const res = await api(`/api/move/${G.id}`, { seat: G.seat, move });
+    Object.assign(G, res);
+    ui = freshUi();
+    render(); // 先立刻展示己方操作结果
+    if (res.pending) {
+      const r2 = await requestBot(`/api/bot/${G.id}`);
+      Object.assign(G, r2);
+      revealBotMove();
+    }
+  } catch (err) {
+    $('#move-error').textContent = err.message;
+    render();
+  }
+}
+
 /** bot 走完后展示其操作回顾 (需要关闭才回到棋盘); 对局结束时同样弹出, 呈现制胜的最后操作 */
 function revealBotMove() {
   ui = freshUi();
@@ -491,6 +536,9 @@ function renderModals() {
   } else if (myTurn() && ui.action && ui.extrasOpen) {
     renderExtrasModal(box);
     show = true;
+  } else if (myTurn() && ui.hintOpen && G.botSearch?.[1 - G.seat]?.reply) {
+    renderHintModal(box);
+    show = true;
   } else if (ui.showBotMove && (G.recentMoves?.length ?? 0) > 0) {
     renderBotMoveModal(box);
     show = true;
@@ -577,6 +625,7 @@ function closeModal() {
   if (noticePending()) ui.noticeSeen = noticeKey();
   else if (ui.phase === 'priv') { ui.privileges = []; ui.phase = 'main'; }
   else if (ui.phase === 'replenish') ui.phase = 'main';
+  else if (ui.hintOpen) ui.hintOpen = false;
   else if (ui.showBotMove) ui.showBotMove = false;
   else if (ui.pick) { ui.pick = null; ui.hint = ''; }
   else if (ui.action) { ui.action = null; ui.extras = {}; ui.takeSamePick = null; ui.extrasOpen = false; }
@@ -897,6 +946,19 @@ function renderPlayers() {
     const stats = el('div', 'p-stats');
     stats.append(span('pts', `${p.points} 分`), span('sep', '·'), span('cr', `${p.crowns} 👑`));
     head.append(stats);
+    // 💡: 对手搜索附带的本方最佳应对估计, 仅人机模式且轮到自己时可用。
+    const hint = mine && myTurn() ? G.botSearch?.[1 - s]?.reply : null;
+    if (hint) {
+      const bulb = el('button', 'hint-btn', '💡');
+      bulb.type = 'button';
+      bulb.title = '对手搜索估计的最佳应对';
+      bulb.setAttribute('aria-label', '显示推荐操作');
+      bulb.setAttribute('aria-expanded', ui.hintOpen ? 'true' : 'false');
+      bulb.addEventListener('click', () => { ui.hintOpen = true; render(); });
+      head.insertBefore(bulb, stats);
+    } else if (mine && ui.hintOpen) {
+      ui.hintOpen = false;
+    }
     card.append(head);
 
     if (bot) {

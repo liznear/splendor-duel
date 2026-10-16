@@ -21,6 +21,10 @@ type Stats struct {
 	Simulations     int      `json:"simulations"`
 	MoveSimulations int      `json:"moveSimulations"`
 	WinRate         *float64 `json:"winRate"`
+	// Reply is the opponent's best sampled response to the selected move,
+	// read from the second tree level at no extra search cost. It is the
+	// searcher's model of the opponent, not a certified minimax reply.
+	Reply *game.Move `json:"reply,omitempty"`
 }
 
 func ChooseWithStats(ctx context.Context, s *game.State, c Config) (game.Move, *Stats, error) {

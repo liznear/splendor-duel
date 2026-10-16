@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"splender/internal/game"
@@ -218,6 +219,59 @@ func (m *match) ensurePlayable() error {
 	m.noticeSeat = &seat
 	return nil
 }
+
+// replyHint renders a sampled reply for the hint UI. The move may bundle
+// optional actions (privileges, replenishment); the main action's description
+// must read the board after those options, and the steps themselves are part
+// of the recommendation.
+func replyHint(s *game.State, m game.Move) string {
+	board := s
+	if m.ReplenishFirst && m.Replenish {
+		if next, err := game.Option(s, game.Move{Replenish: true}); err == nil {
+			board = next
+		}
+	}
+	if len(m.Privileges) > 0 || m.Replenish && !m.ReplenishFirst {
+		if next, err := game.Option(board, game.Move{Privileges: m.Privileges, Replenish: m.Replenish && !m.ReplenishFirst}); err == nil {
+			board = next
+		}
+	}
+	steps := []string{}
+	if m.Replenish && m.ReplenishFirst {
+		steps = append(steps, "补充棋盘")
+	}
+	if len(m.Privileges) > 0 {
+		steps = append(steps, fmt.Sprintf("使用特权×%d", len(m.Privileges)))
+	}
+	if m.Replenish && !m.ReplenishFirst {
+		steps = append(steps, "补充棋盘")
+	}
+	text := game.ActionText(board, m.Action)
+	if len(steps) > 0 {
+		return strings.Join(steps, " · ") + " · " + text
+	}
+	return text
+}
+
+// setReply validates a sampled reply against the live final state and
+// publishes it as the searching bot's hint; illegal or absent replies only
+// clear the previous hint. Entries are replaced, never mutated, so snapshots
+// already sent to other readers stay intact.
+func (m *match) setReply(botSeat int, reply *game.Move) {
+	bs := m.botSearch[botSeat]
+	if bs == nil {
+		return
+	}
+	fresh := *bs
+	fresh.Reply = nil
+	if reply != nil && !m.state.Over() {
+		if _, err := game.Apply(m.state, *reply); err == nil {
+			fresh.Reply = &BotReply{Text: replyHint(m.state, *reply), Move: *reply}
+		}
+	}
+	m.botSearch[botSeat] = &fresh
+}
+
 func (m *match) recordResult() error {
 	if !m.state.Over() {
 		return nil
@@ -288,6 +342,16 @@ func (s *Service) Move(id string, seat int, move game.Move) (Snapshot, error) {
 	if err = m.ensurePlayable(); err != nil {
 		return Snapshot{}, err
 	}
+	// The human's move may earn an extra turn; the bot's stepped trees hold
+	// the sampled best move for that turn. Otherwise the spent hint is cleared.
+	bot := 1 - seat
+	var hint *game.Move
+	if m.state.Current == seat {
+		if sess := m.mcts[bot]; sess != nil {
+			hint = sess.OpponentHint()
+		}
+	}
+	m.setReply(bot, hint)
 	return m.snapshot(m.human), nil
 }
 func (s *Service) Option(id string, seat int, move game.Move) (Snapshot, error) {
@@ -312,6 +376,8 @@ func (s *Service) Option(id string, seat int, move game.Move) (Snapshot, error) 
 	}
 	m.state = next
 	m.resetMCTS()
+	// An optional action changes the board, so the sampled reply hint is stale.
+	m.setReply(1-seat, nil)
 	if err = m.ensurePlayable(); err != nil {
 		return Snapshot{}, err
 	}
@@ -450,6 +516,11 @@ func (s *Service) run(m *match, j *job, human bool) {
 			m.state = next
 			m.stepMCTS(move)
 			err = m.ensurePlayable()
+			// The search's second tree level holds the opponent's best sampled
+			// response; expose it only when it survives the live final state.
+			if err == nil && stats != nil {
+				m.setReply(state.Current, stats.Reply)
+			}
 		}
 		m.mu.Unlock()
 		if err != nil || !human {

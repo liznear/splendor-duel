@@ -7,6 +7,18 @@ type BotSearch struct {
 	MoveSimulations int      `json:"moveSimulations"`
 	WinRate         *float64 `json:"winRate"`
 	Turn            int      `json:"turn"`
+	// Reply describes the opponent's best sampled response to the searched
+	// move, for display as a hint. Null when the search never sampled past
+	// its own move or the sampled reply is no longer legal.
+	Reply *BotReply `json:"reply,omitempty"`
+}
+
+// BotReply carries the hint for the human: a display text and the sampled
+// move itself, ready to submit verbatim (bundled optional actions and
+// engine picks included) through the move endpoint.
+type BotReply struct {
+	Text string    `json:"text"`
+	Move game.Move `json:"move"`
 }
 
 // These DTOs define the versioned wire contract independently of storage and search.

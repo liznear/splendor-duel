@@ -2,12 +2,14 @@
 package search
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
 	"math/rand/v2"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 
 	"splender/internal/game"
@@ -240,7 +242,103 @@ func (sess *Session) searchMCTS(ctx context.Context, s *game.State, refillTurn i
 		rate := wins / float64(visits)
 		stats.WinRate = &rate
 	}
+	if r := bestReply(sess.trees, fallback, sess.seat); r != nil {
+		stats.Reply = r
+	}
 	return fallback, stats
+}
+
+// bestReply reads the opponent's best sampled response to the chosen move
+// straight off the second tree level (root edge -> its children). Wins are
+// stored from the searcher's perspective, so the opponent's best reply
+// minimizes wins/visits; ties prefer the more visited move. If the chosen
+// move earns the searcher an extra turn, that level holds the searcher's own
+// moves and is skipped; the following search reports the real reply. Only
+// sampled moves are considered, so the result inherits the MCTS action
+// policy and the search budget's coverage.
+func bestReply(trees []*tree, chosen game.Move, seat int) *game.Move {
+	key := moveKey(chosen)
+	var groups [][]*edge
+	for _, t := range trees {
+		if t == nil {
+			continue
+		}
+		for _, e := range t.root.children {
+			if e.child == nil || moveKey(decodeSimMove(e.move)) != key {
+				continue
+			}
+			st := *t.trunk
+			st.apply(e.move)
+			if st.current != seat {
+				groups = append(groups, e.child.children)
+			}
+			break
+		}
+	}
+	return bestOpponentMove(groups)
+}
+
+// OpponentHint reads the best sampled move for the non-searcher from the
+// current tree roots. It is valid right after Step advanced the trees along
+// an opponent move that earned an extra turn (the roots are then the
+// opponent's own nodes); nil when that level was never sampled.
+func (sess *Session) OpponentHint() *game.Move {
+	var groups [][]*edge
+	for _, t := range sess.trees {
+		if t == nil || t.trunk == nil || t.trunk.current == sess.seat {
+			continue
+		}
+		groups = append(groups, t.root.children)
+	}
+	return bestOpponentMove(groups)
+}
+
+// bestOpponentMove aggregates per-move-key statistics across the given edge
+// groups and returns the move minimizing the searcher's win rate (wins are
+// stored from the searcher's perspective); ties prefer the more visited move.
+func bestOpponentMove(groups [][]*edge) *game.Move {
+	type agg struct {
+		move   game.Move
+		visits int
+		wins   float64
+	}
+	found := map[string]*agg{}
+	for _, edges := range groups {
+		for _, r := range edges {
+			if r.visits == 0 {
+				continue
+			}
+			m := decodeSimMove(r.move)
+			key := moveKey(m)
+			a := found[key]
+			if a == nil {
+				a = &agg{move: m}
+				found[key] = a
+			}
+			a.visits += r.visits
+			a.wins += r.wins
+		}
+	}
+	var list []*agg
+	for _, a := range found {
+		list = append(list, a)
+	}
+	// Map iteration is random: sort so equal-rate ties resolve identically
+	// across calls (symmetric takes often share exact rates and visit counts).
+	slices.SortStableFunc(list, func(a, b *agg) int {
+		if c := cmp.Compare(a.wins/float64(a.visits), b.wins/float64(b.visits)); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(b.visits, a.visits); c != 0 {
+			return c
+		}
+		return strings.Compare(moveKey(a.move), moveKey(b.move))
+	})
+	if len(list) == 0 {
+		return nil
+	}
+	m := list[0].move
+	return &m
 }
 func moveKey(m game.Move) string {
 	return fmt.Sprintf("%s:%v:%d:%s:%d:%d:%d:%v:%t:%t", m.Action.Kind, m.Action.Cells, m.Action.GoldCell, m.Action.From.Kind, m.Action.From.Slot, m.Action.From.Index, m.Action.From.Level, m.Privileges, m.Replenish, m.ReplenishFirst)

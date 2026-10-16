@@ -15,9 +15,10 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
     'el', 'span', 'gemEl', 'privilegeIcons', 'tokenChip', 'cardTitle', 'cardBack', 'miniCard', 'miniBack', 'miniRoyal',
     'renderPlayers', 'renderActionbar', 'gemsRow', 'tokenCountsRow', 'tokenDeltaRow', 'botMoveRow',
     'botTakeBoard', 'deltasRow', 'requestBot', 'renderBotProgress', 'modalHead',
-    'modalDragButton', 'positionModal', 'resetModalPosition',
+    'modalDragButton', 'positionModal', 'resetModalPosition', 'freshUi', 'renderHintModal', 'applyHint',
   ].map((name) => {
-    const start = source.indexOf(`function ${name}(`);
+    let start = source.indexOf(`function ${name}(`);
+    if (start >= 6 && source.slice(start - 6, start) === 'async ') start -= 6; // 保留 async 关键字
     const firstLine = source.slice(start, source.indexOf('\n', start));
     if (firstLine.endsWith('}')) return firstLine;
     return source.slice(start, source.indexOf('\n}', start) + 2);
@@ -33,7 +34,7 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
       window.__reservedCardImage = '${reservedCardImage}';
       const cellName = i => String(i);
       const $ = s => document.querySelector(s);
-      const ui = { privileges: [], extras: {}, phase: 'main' };
+      let ui = { privileges: [], extras: {}, phase: 'main' };
       const render = () => {};
       let botThinking = null;
       let modalPosition = null;
@@ -102,6 +103,22 @@ test.skipIf(!chrome)('viewport layout, player statistics, selection controls and
       renderPlayers();
       check(!document.querySelector('#players .player[data-seat="1"] .bot-search'), 'human panel must omit the bot search line');
       check($('#players .player[data-seat="0"] .bot-progress progress') != null, 'bot progress bar must be persistent');
+      G.botSearch[0].reply = { text: '拿取 A1红', move: { action: { kind: 'take', cells: [0] } } };
+      renderPlayers();
+      check(!!document.querySelector('#players .player[data-seat="1"] .hint-btn'), 'human panel must offer a hint button when the bot search carries a reply');
+      document.querySelector('#players .player[data-seat="1"] .hint-btn').click();
+      check(ui.hintOpen === true, 'clicking the bulb must request the hint modal');
+      renderHintModal($('#modal-box'));
+      check($('#modal-box .hint')?.textContent.includes('拿取'), 'hint modal must show the recommended action text');
+      check($('#modal-box .modal-actions .primary')?.textContent.includes('应用'), 'hint modal must offer a one-click apply button');
+      $('#modal-box .modal-actions .primary').click();
+      finishBot({});
+      await new Promise(resolve => setTimeout(resolve, 0));
+      check(ui.hintOpen === false && !$('#move-error').textContent, 'applying the hint must submit the sampled move and reset the modal state');
+      G.view.current = 0;
+      renderPlayers();
+      check(!document.querySelector('#players .player[data-seat="1"] .hint-btn'), 'hint button must disappear outside the human turn');
+      G.view.current = 1;
       G.view.board = Array(25).fill(null);
       const recap = botMoveRow({ action: {kind: 'take', cells: [0]}, privGems: ['blue'], replenished: true, takeGems: ['red'] });
       check([...recap.querySelectorAll('.bm-step .bm-lab')].map(e => e.textContent).join('|') === '使用特权|补充棋盘|拿取宝石', 'bot recap must show privileges, replenishment, then the main move');

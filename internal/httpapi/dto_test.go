@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"splender/internal/game"
@@ -46,6 +47,31 @@ func TestVisualIncludesDefaultAbilityResults(t *testing.T) {
 	}
 }
 
+func TestReplyHintDescribesBundledOptionalActions(t *testing.T) {
+	first := 0
+	s := game.New(42, [2]string{"Bot", "Human"}, &first)
+	for i := range s.Board {
+		s.Board[i] = "blue"
+	}
+	s.Board[0] = ""
+	s.Bag = []game.Color{"red"}
+	// The take targets the cell that replenishment fills: describing it on
+	// the pre-option board renders a token that does not exist yet.
+	refillTake := game.Move{Replenish: true, Action: game.Action{Kind: "take", Cells: []int{0}}}
+	if text := replyHint(s, refillTake); !strings.Contains(text, "补充棋盘") || !strings.Contains(text, "红") {
+		t.Fatalf("replenished take must describe the refilled color: %q", text)
+	}
+	s.Players[0].Privileges = 1
+	both := game.Move{Replenish: true, ReplenishFirst: true, Privileges: []int{0}, Action: game.Action{Kind: "take", Cells: []int{1}}}
+	if text := replyHint(s, both); !strings.Contains(text, "补充棋盘 · 使用特权×1 · ") || !strings.Contains(text, "蓝") {
+		t.Fatalf("bundled options must be listed in order before the main action: %q", text)
+	}
+	plain := game.Move{Action: game.Action{Kind: "take", Cells: []int{2}}}
+	if text := replyHint(s, plain); strings.Contains(text, "·") || !strings.Contains(text, "蓝") {
+		t.Fatalf("plain takes must render the bare action description: %q", text)
+	}
+}
+
 func TestVisualUsesBoardAfterOptionalActions(t *testing.T) {
 	for _, replenishFirst := range []bool{false, true} {
 		first := 0
@@ -79,14 +105,14 @@ func TestVisualUsesBoardAfterOptionalActions(t *testing.T) {
 func TestSnapshotReportsLatestBotSearch(t *testing.T) {
 	s, _ := harness(t)
 	seed := int64(42)
-	out, err := s.create(CreateRequest{Mode: "agents", Seed: &seed, Players: [2]search.Config{{Kind: "mcts", TimeMS: 100, Parallelism: 2}, {Kind: "greedy"}}}, nil, "")
+	out, err := s.create(CreateRequest{Mode: "agents", Seed: &seed, Players: [2]search.Config{{Kind: "mcts", TimeMS: 500, Parallelism: 2}, {Kind: "greedy"}}}, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.BotSearch[0] != nil {
 		t.Fatal("new game must not invent search statistics")
 	}
-	if out.BotTimeoutMS[0] != 100 {
+	if out.BotTimeoutMS[0] != 500 {
 		t.Fatalf("configured timeout missing from snapshot: %v", out.BotTimeoutMS)
 	}
 	id := out.ID
@@ -98,6 +124,9 @@ func TestSnapshotReportsLatestBotSearch(t *testing.T) {
 	stats := out.BotSearch[0]
 	if stats == nil || stats.Simulations <= 0 || stats.WinRate == nil || stats.Turn != 1 {
 		t.Fatalf("missing completed bot search: %+v", stats)
+	}
+	if stats.Reply == nil || stats.Reply.Text == "" || stats.Reply.Move.Action.Kind == "" {
+		t.Fatalf("snapshot must expose the sampled reply hint: %+v", stats)
 	}
 	current, err := s.State(id, 0)
 	if err != nil || current.BotSearch[0] != stats || current.BotSearch[1] != nil {

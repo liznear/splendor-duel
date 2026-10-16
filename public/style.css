@@ -134,6 +134,7 @@ body[data-variant] .player button.res-box:hover, button.res-box:hover { backgrou
 .player .winrate { font-size: 12px; color: var(--brass-ink); background: rgba(201, 154, 30, .12); border-radius: 999px; padding: 1px 8px; cursor: default; }
 .player .name { font-weight: 700; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .player .p-stats { display: flex; gap: 8px; font-size: 14px; color: var(--dim); align-items: baseline; white-space: nowrap; margin-left: auto; }
+.player .hint-btn { font-size: 14px; line-height: 1; padding: 2px 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; }
 .player .p-stats .pts { color: var(--brass-ink); }
 .player .p-stats .cr { color: var(--brass-ink); }
 .player .tokens { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center; min-width: 0; }
